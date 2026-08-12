@@ -8,6 +8,7 @@ import { createCitationAccessibilityCheck } from "./lib/radar/citation-accessibi
 import { recordCollectionCycle } from "./lib/radar/collection-stage-recorder.ts";
 import { createDailyPublicationSchedule } from "./lib/radar/daily-publication-schedule.ts";
 import { githubTrendingConnector } from "./lib/radar/connectors/github-trending.ts";
+import { huggingFaceTrendingConnector } from "./lib/radar/connectors/hugging-face-trending.ts";
 import { getDatabasePool } from "./lib/radar/database.ts";
 import { createModelRuntimeFromEnvironment } from "./lib/radar/model-runtime.ts";
 import { createTaskWorkerSchedule } from "./lib/radar/task-worker-schedule.ts";
@@ -25,22 +26,30 @@ const assessmentPipeline = createAssessmentPipeline({
   clock: () => new Date(),
   createRunId: randomUUID,
   modelRuntime: { id: process.env.RADAR_MODEL_RUNTIME_ID ?? "not-configured" },
-  sourceConnectors: [githubTrendingConnector],
+  sourceConnectors: [githubTrendingConnector, huggingFaceTrendingConnector],
 });
 
-async function collectGitHubTrendingIntoArchive() {
-  const result = await assessmentPipeline.runCollectionCycle("github-trending");
+async function collectSourceIntoArchive(connectorId: "github-trending" | "hugging-face-trending") {
+  const result = await assessmentPipeline.runCollectionCycle(connectorId);
   await recordCollectionCycle({
     archive: postgresBriefPublicationArchive,
     clock: () => new Date(),
     result,
   });
   if (result.status === "succeeded") {
-    console.log(`GitHub Trending 采集完成：${result.candidateCount} 个候选`);
+    console.log(`${connectorId} 采集完成：${result.candidateCount} 个候选`);
   } else {
-    console.error(`GitHub Trending 采集失败：${result.errorMessage}`);
+    console.error(`${connectorId} 采集失败：${result.errorMessage}`);
   }
   return result;
+}
+
+async function collectConfiguredSources() {
+  const results = await Promise.all([
+    collectSourceIntoArchive("github-trending"),
+    collectSourceIntoArchive("hugging-face-trending"),
+  ]);
+  return results.some((result) => result.status === "succeeded") ? "succeeded" as const : "failed" as const;
 }
 
 async function publishDailyBriefIfConfigured() {
@@ -89,7 +98,7 @@ async function runWorker() {
   const schedule = createTaskWorkerSchedule({
     clock: () => new Date(),
     collectionIntervalMs: getCollectionIntervalMs(),
-    collect: async () => (await collectGitHubTrendingIntoArchive()).status,
+    collect: collectConfiguredSources,
     onError: (error) => console.error("Task Worker 任务失败：", error),
     publish: publishDailyBriefWhenDue,
     timers: { clearInterval, clearTimeout, setInterval, setTimeout },

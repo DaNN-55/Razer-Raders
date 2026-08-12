@@ -8,6 +8,7 @@ import { postgresAssessmentPipelineArchive } from "../../src/lib/radar/assessmen
 import { createAssessmentPipeline, type SourceConnector } from "../../src/lib/radar/assessment-pipeline.ts";
 import { getDatabasePool } from "../../src/lib/radar/database.ts";
 import type { Candidate } from "../../src/lib/radar/connectors/types.ts";
+import { collectHuggingFaceTrending } from "../../src/lib/radar/connectors/hugging-face-trending.ts";
 import { createOllamaRuntimeFromEnvironment } from "../../src/lib/radar/ollama-runtime.ts";
 
 const candidate: PublicationCandidate = {
@@ -553,6 +554,101 @@ test("单一 Source Connector 降级不会阻断已发布 Brief，并在恢复�
     status: "新鲜",
     tone: "fresh",
   });
+});
+
+test("Hugging Face Trending 固定 Fixture 经真实 Archive 保留 Candidate、Evidence 与独立 Health", { concurrency: false }, async () => {
+  const connector: SourceConnector = {
+    collect: () => collectHuggingFaceTrending(async () => ({
+      body: '<article class="overview-card-wrapper"><a href="/Qwen/Qwen3-8B"><h4>Qwen/Qwen3-8B</h4></a></article>',
+      contentType: "text/html",
+      url: "https://huggingface.co/models?sort=trending",
+    })),
+    id: "hugging-face-trending",
+  };
+  const result = await createAssessmentPipeline({
+    archive: postgresAssessmentPipelineArchive,
+    clock: () => new Date("2026-08-12T02:00:00.000Z"),
+    createRunId: () => "collection-run-e2e-hugging-face",
+    modelRuntime: { id: "fixture-runtime" },
+    sourceConnectors: [connector],
+  }).runCollectionCycle("hugging-face-trending");
+
+  assert.deepEqual(result, {
+    candidateCount: 1,
+    connectorId: "hugging-face-trending",
+    runId: "collection-run-e2e-hugging-face",
+    status: "succeeded",
+  });
+  const candidateAndEvidence = await getDatabasePool().query<{
+    canonical_identifier: string;
+    source_title: string;
+    source_url: string;
+    trust: string;
+  }>(
+    `SELECT candidate.canonical_identifier, evidence.source_title, evidence.source_url, evidence.trust
+    FROM radar_candidates candidate
+    JOIN candidate_source_evidence candidate_evidence ON candidate_evidence.candidate_id = candidate.id
+    JOIN source_evidence evidence ON evidence.id = candidate_evidence.evidence_id
+    WHERE candidate.canonical_identifier = 'hugging-face:qwen/qwen3-8b'`,
+  );
+  assert.deepEqual(candidateAndEvidence.rows, [{
+    canonical_identifier: "hugging-face:qwen/qwen3-8b",
+    source_title: "Qwen/Qwen3-8B",
+    source_url: "https://huggingface.co/Qwen/Qwen3-8B",
+    trust: "untrusted",
+  }]);
+
+  const response = await fetch(`${baseUrl}/api/brief`);
+  const brief = await response.json();
+  assert.deepEqual(brief.connectors.find((item: { name: string }) => item.name === "Hugging Face"), {
+    caption: "模型与 Spaces 热度",
+    detail: null,
+    name: "Hugging Face",
+    status: "新鲜",
+    tone: "fresh",
+  });
+});
+
+test("Hugging Face 采集失败只更新自身 Health，GitHub 仍可独立成功", { concurrency: false }, async () => {
+  let runNumber = 0;
+  const pipeline = createAssessmentPipeline({
+    archive: postgresAssessmentPipelineArchive,
+    clock: () => new Date("2026-08-12T02:00:00.000Z"),
+    createRunId: () => `collection-run-e2e-independent-health-${++runNumber}`,
+    modelRuntime: { id: "fixture-runtime" },
+    sourceConnectors: [
+      {
+        collect: async () => {
+          throw new Error("Hugging Face unavailable");
+        },
+        id: "hugging-face-trending",
+      },
+      {
+        collect: async () => ({
+          candidates: [],
+          collectedAt: "2026-08-12T02:00:00.000Z",
+          connectorId: "github-trending",
+          connectorVersion: "github-trending@fixture",
+          warnings: [],
+        }),
+        id: "github-trending",
+      },
+    ],
+  });
+
+  assert.equal((await pipeline.runCollectionCycle("hugging-face-trending")).status, "failed");
+  assert.equal((await pipeline.runCollectionCycle("github-trending")).status, "succeeded");
+  const health = await getDatabasePool().query<{
+    connector_id: string;
+    detail: string | null;
+    status: string;
+  }>(
+    "SELECT connector_id, status, detail FROM connector_health WHERE connector_id IN ('github-trending', 'hugging-face-trending') ORDER BY connector_id",
+  );
+  assert.deepEqual(health.rows, [
+    { connector_id: "github-trending", detail: null, status: "新鲜" },
+    { connector_id: "hugging-face-trending", detail: "Hugging Face unavailable", status: "采集失败" },
+  ]);
 });
 
 test("跨日发布不会改写前一日 Snapshot 与 Provenance", { concurrency: false }, async () => {
