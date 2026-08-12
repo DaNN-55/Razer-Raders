@@ -36,6 +36,7 @@ export function createOllamaRuntimeFromEnvironment(
           model,
           prompt: createAssessmentPrompt(candidate),
           stream: false,
+          think: false,
         }),
         headers: { "Content-Type": "application/json" },
         method: "POST",

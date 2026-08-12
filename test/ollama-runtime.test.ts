@@ -46,10 +46,11 @@ test("Ollama Local Runtime 无需凭证，并以 Generate 输出同一结构化�
   assert.equal(requestedUrl, "http://127.0.0.1:11434/api/generate");
   assert.equal(requestedHeaders.get("authorization"), null);
   assert.equal(requestedHeaders.get("content-type"), "application/json");
-  const request = JSON.parse(requestedBody) as { format: string; model: string; prompt: string; stream: boolean };
+  const request = JSON.parse(requestedBody) as { format: string; model: string; prompt: string; stream: boolean; think: boolean };
   assert.equal(request.format, "json");
   assert.equal(request.model, "qwen3:8b");
   assert.equal(request.stream, false);
+  assert.equal(request.think, false);
   assert.match(request.prompt, /openai\/codex/);
   assert.equal(assessment.technicalBasis, "该项目使用 TypeScript。");
   assert.deepEqual(assessment.citations.whyNow, ["https://github.com/openai/codex"]);
