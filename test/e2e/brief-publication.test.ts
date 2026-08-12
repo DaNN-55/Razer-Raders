@@ -9,6 +9,7 @@ import { createAssessmentPipeline, type SourceConnector } from "../../src/lib/ra
 import { getDatabasePool } from "../../src/lib/radar/database.ts";
 import type { Candidate } from "../../src/lib/radar/connectors/types.ts";
 import { collectHuggingFaceTrending } from "../../src/lib/radar/connectors/hugging-face-trending.ts";
+import { collectShowHn } from "../../src/lib/radar/connectors/show-hn.ts";
 import { createOllamaRuntimeFromEnvironment } from "../../src/lib/radar/ollama-runtime.ts";
 
 const candidate: PublicationCandidate = {
@@ -649,6 +650,73 @@ test("Hugging Face 采集失败只更新自身 Health，GitHub 仍可独立成�
     { connector_id: "github-trending", detail: null, status: "新鲜" },
     { connector_id: "hugging-face-trending", detail: "Hugging Face unavailable", status: "采集失败" },
   ]);
+});
+
+test("Show HN 外链证据在真实 Archive 保持 Related Signal，独立帖子不强制合并", { concurrency: false }, async () => {
+  const connector: SourceConnector = {
+    collect: () => collectShowHn(async () => ({
+      body: `
+        <tr class="athing submission" id="49270040"><td><span class="titleline"><a href="https://demo.example">Show HN: First demo</a></span></td></tr>
+        <tr class="athing submission" id="49270041"><td><span class="titleline"><a href="https://demo.example">Show HN: Second demo</a></span></td></tr>
+      `,
+      contentType: "text/html",
+      url: "https://news.ycombinator.com/show",
+    })),
+    id: "show-hn",
+  };
+  const result = await createAssessmentPipeline({
+    archive: postgresAssessmentPipelineArchive,
+    clock: () => new Date("2026-08-12T02:00:00.000Z"),
+    createRunId: () => "collection-run-e2e-show-hn",
+    modelRuntime: { id: "fixture-runtime" },
+    sourceConnectors: [connector],
+  }).runCollectionCycle("show-hn");
+
+  assert.deepEqual(result, { candidateCount: 2, connectorId: "show-hn", runId: "collection-run-e2e-show-hn", status: "succeeded" });
+  const stored = await getDatabasePool().query<{
+    association: string;
+    candidate_id: string;
+    source_title: string;
+    source_url: string;
+  }>(
+    `SELECT candidate_evidence.association, candidate_evidence.candidate_id, evidence.source_title, evidence.source_url
+    FROM candidate_source_evidence candidate_evidence
+    JOIN source_evidence evidence ON evidence.id = candidate_evidence.evidence_id
+    WHERE candidate_evidence.candidate_id LIKE 'show-hn:%'
+    ORDER BY candidate_evidence.candidate_id`,
+  );
+  assert.deepEqual(stored.rows, [
+    { association: "related", candidate_id: "show-hn:49270040", source_title: "Show HN: First demo", source_url: "https://demo.example/" },
+    { association: "related", candidate_id: "show-hn:49270041", source_title: "Show HN: Second demo", source_url: "https://demo.example/" },
+  ]);
+  const health = await getDatabasePool().query<{ detail: string | null; status: string }>(
+    "SELECT status, detail FROM connector_health WHERE connector_id = 'show-hn'",
+  );
+  assert.deepEqual(health.rows, [{ detail: null, status: "新鲜" }]);
+});
+
+test("Show HN 采集失败只更新自身 Connector Health", { concurrency: false }, async () => {
+  const connector: SourceConnector = {
+    collect: async () => { throw new Error("Show HN unavailable"); },
+    id: "show-hn",
+  };
+  const result = await createAssessmentPipeline({
+    archive: postgresAssessmentPipelineArchive,
+    clock: () => new Date("2026-08-12T02:00:00.000Z"),
+    createRunId: () => "collection-run-e2e-show-hn-failed",
+    modelRuntime: { id: "fixture-runtime" },
+    sourceConnectors: [connector],
+  }).runCollectionCycle("show-hn");
+  assert.deepEqual(result, {
+    connectorId: "show-hn",
+    errorMessage: "Show HN unavailable",
+    runId: "collection-run-e2e-show-hn-failed",
+    status: "failed",
+  });
+  const health = await getDatabasePool().query<{ detail: string | null; status: string }>(
+    "SELECT status, detail FROM connector_health WHERE connector_id = 'show-hn'",
+  );
+  assert.deepEqual(health.rows, [{ detail: "Show HN unavailable", status: "采集失败" }]);
 });
 
 test("跨日发布不会改写前一日 Snapshot 与 Provenance", { concurrency: false }, async () => {

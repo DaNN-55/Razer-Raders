@@ -9,6 +9,8 @@ import { recordCollectionCycle } from "./lib/radar/collection-stage-recorder.ts"
 import { createDailyPublicationSchedule } from "./lib/radar/daily-publication-schedule.ts";
 import { githubTrendingConnector } from "./lib/radar/connectors/github-trending.ts";
 import { huggingFaceTrendingConnector } from "./lib/radar/connectors/hugging-face-trending.ts";
+import { showHnConnector } from "./lib/radar/connectors/show-hn.ts";
+import type { ConnectorId } from "./lib/radar/connectors/types.ts";
 import { getDatabasePool } from "./lib/radar/database.ts";
 import { createModelRuntimeFromEnvironment } from "./lib/radar/model-runtime.ts";
 import { createTaskWorkerSchedule } from "./lib/radar/task-worker-schedule.ts";
@@ -26,10 +28,10 @@ const assessmentPipeline = createAssessmentPipeline({
   clock: () => new Date(),
   createRunId: randomUUID,
   modelRuntime: { id: process.env.RADAR_MODEL_RUNTIME_ID ?? "not-configured" },
-  sourceConnectors: [githubTrendingConnector, huggingFaceTrendingConnector],
+  sourceConnectors: [githubTrendingConnector, huggingFaceTrendingConnector, showHnConnector],
 });
 
-async function collectSourceIntoArchive(connectorId: "github-trending" | "hugging-face-trending") {
+async function collectSourceIntoArchive(connectorId: ConnectorId) {
   const result = await assessmentPipeline.runCollectionCycle(connectorId);
   await recordCollectionCycle({
     archive: postgresBriefPublicationArchive,
@@ -48,6 +50,7 @@ async function collectConfiguredSources() {
   const results = await Promise.all([
     collectSourceIntoArchive("github-trending"),
     collectSourceIntoArchive("hugging-face-trending"),
+    collectSourceIntoArchive("show-hn"),
   ]);
   return results.some((result) => result.status === "succeeded") ? "succeeded" as const : "failed" as const;
 }
