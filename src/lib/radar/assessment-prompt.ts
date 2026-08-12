@@ -7,6 +7,7 @@ export function createAssessmentPrompt(candidate: AssessableCandidate) {
     "JSON 必须包含 builderValue、productOpportunity、summary、happened、whyNow、technicalBasis、risk、topics、citations.happened、citations.whyNow、citations.technicalBasis。",
     "builderValue 只能是“试用”、“学习”、“跟进”或“跳过”；productOpportunity 只能是“无”、“待验证”或“值得探索”。",
     "事实段落的 citations 只能使用下方 Evidence URL。",
+    "每个 citations.happened、citations.whyNow、citations.technicalBasis 都必须是至少含一条 Evidence URL 的数组。",
     JSON.stringify(candidate),
   ].join("\n\n");
 }

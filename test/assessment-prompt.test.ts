@@ -13,4 +13,5 @@ test("评估提示词限定 Builder Value 和 Product Opportunity 的契约枚�
 
   assert.match(prompt, /builderValue 只能是“试用”、“学习”、“跟进”或“跳过”/);
   assert.match(prompt, /productOpportunity 只能是“无”、“待验证”或“值得探索”/);
+  assert.match(prompt, /每个 citations\.happened、citations\.whyNow、citations\.technicalBasis 都必须是至少含一条 Evidence URL 的数组/);
 });
