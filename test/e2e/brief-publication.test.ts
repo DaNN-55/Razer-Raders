@@ -164,6 +164,69 @@ async function seedSecondCandidate() {
   );
 }
 
+async function seedUnpublishedCandidate() {
+  const database = getDatabasePool();
+  const unpublishedCandidate = {
+    canonicalIdentifier: "github:openai/unpublished",
+    sourceUrl: "https://github.com/openai/unpublished",
+    title: "openai/unpublished",
+  };
+  const now = new Date();
+  await database.query(
+    "INSERT INTO radar_subjects (id, canonical_identifier, title, signal_type) VALUES ($1, $2, $3, $4)",
+    ["subject:github:openai/unpublished", unpublishedCandidate.canonicalIdentifier, unpublishedCandidate.title, "project"],
+  );
+  await database.query(
+    `INSERT INTO radar_candidates (
+      id, canonical_identifier, subject_canonical_identifier, connector_id, subject_id, signal_type, title, source_url,
+      first_collected_at, last_collected_at, evaluation_status, signal_state, priority, ranking_score, ranking_policy_version,
+      observation_count, selection_reason
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9, 'evaluating', $10, $11, $12, 'v0.1', 1, $13)`,
+    [
+      unpublishedCandidate.canonicalIdentifier,
+      unpublishedCandidate.canonicalIdentifier,
+      unpublishedCandidate.canonicalIdentifier,
+      "github-trending",
+      "subject:github:openai/unpublished",
+      "project",
+      unpublishedCandidate.title,
+      unpublishedCandidate.sourceUrl,
+      now,
+      candidate.signalState,
+      candidate.priority,
+      candidate.rankingScore,
+      candidate.selectionReason,
+    ],
+  );
+  const evidence = await database.query<{ id: number }>(
+    `INSERT INTO source_evidence (canonical_identifier, connector_id, source_name, source_title, source_url, collected_at, trust)
+    VALUES ($1, $2, $3, $4, $5, $6, 'untrusted') RETURNING id`,
+    [unpublishedCandidate.canonicalIdentifier, "github-trending", "GitHub Trending", unpublishedCandidate.title, unpublishedCandidate.sourceUrl, now],
+  );
+  const evidenceId = evidence.rows[0]?.id;
+  if (evidenceId === undefined) throw new Error("E2E Fixture 未能写入未发布 Source Evidence。");
+  await database.query(
+    "INSERT INTO candidate_source_evidence (candidate_id, evidence_id, association) VALUES ($1, $2, 'primary')",
+    [unpublishedCandidate.canonicalIdentifier, evidenceId],
+  );
+}
+
+async function seedUncitedEvidence() {
+  const database = getDatabasePool();
+  const now = new Date();
+  const evidence = await database.query<{ id: number }>(
+    `INSERT INTO source_evidence (canonical_identifier, connector_id, source_name, source_title, source_url, collected_at, trust)
+    VALUES ($1, $2, $3, $4, $5, $6, 'untrusted') RETURNING id`,
+    ["github:openai/codex:uncited", "github-trending", "GitHub Trending", "uncited evidence", "https://github.com/openai/uncited", now],
+  );
+  const evidenceId = evidence.rows[0]?.id;
+  if (evidenceId === undefined) throw new Error("E2E Fixture 未能写入未引用 Source Evidence。");
+  await database.query(
+    "INSERT INTO candidate_source_evidence (candidate_id, evidence_id, association) VALUES ($1, $2, 'related')",
+    [candidate.canonicalIdentifier, evidenceId],
+  );
+}
+
 function recollectedCandidate(): Candidate {
   return {
     canonicalIdentifier: candidate.canonicalIdentifier,
@@ -533,4 +596,54 @@ test("跨日发布不会改写前一日 Snapshot 与 Provenance", { concurrency:
     ranking_policy_version: "v0.1",
     title: "openai/codex",
   }]);
+});
+
+test("Radar Retrieval 仅返回已发布 Archive，可组合筛选、稳定分页并明确空状态", { concurrency: false }, async () => {
+  const publish = (id: string, publishedAt: string) => createBriefPublisher({
+    archive: postgresBriefPublicationArchive,
+    clock: () => new Date(publishedAt),
+    configurationVersion: "profile@v1",
+    createBriefId: () => id,
+    isCitationAccessible: async () => true,
+    pipelineVersion: "assessment-pipeline@v1",
+    runtime: candidateAwareRuntime("ollama:qwen3:8b"),
+  }).publishDailyBrief();
+
+  await seedUncitedEvidence();
+  assert.equal((await publish("brief-e2e-retrieval-one", "2026-08-12T01:00:00.000Z")).status, "published");
+  await seedSecondCandidate();
+  assert.equal((await publish("brief-e2e-retrieval-two", "2026-08-13T01:00:00.000Z")).status, "published");
+  await seedUnpublishedCandidate();
+
+  const filteredResponse = await fetch(`${baseUrl}/api/retrieval?from=2026-08-12T00:00:00.000Z&to=2026-08-13T23:59:59.000Z&topic=%E5%BC%80%E5%8F%91%E5%B7%A5%E5%85%B7&signalType=project&subject=github%3Aopenai%2Fopenai-agents-js&limit=1&offset=0`);
+  const filtered = await filteredResponse.json();
+  assert.equal(filteredResponse.status, 200);
+  assert.deepEqual(filtered.pagination, { hasMore: false, limit: 1, offset: 0 });
+  assert.equal(filtered.availability, "results");
+  assert.equal(filtered.results.length, 1);
+  assert.equal(filtered.results[0]?.title, "openai/openai-agents-js");
+  assert.equal(filtered.results[0]?.subject.canonicalIdentifier, "github:openai/openai-agents-js");
+  assert.deepEqual(filtered.results[0]?.evidence, [{ label: "openai/openai-agents-js", source: "GitHub Trending", url: "https://github.com/openai/openai-agents-js" }]);
+  assert.deepEqual(filtered.results[0]?.provenance, {
+    configurationVersion: "profile@v1",
+    modelRuntimeId: "ollama:qwen3:8b",
+    pipelineVersion: "assessment-pipeline@v1",
+    rankingPolicyVersion: "v0.1",
+  });
+
+  const firstPage = await fetch(`${baseUrl}/api/retrieval?limit=1&offset=0`);
+  const firstPagePayload = await firstPage.json();
+  assert.equal(firstPagePayload.results[0]?.title, "openai/openai-agents-js");
+  assert.deepEqual(firstPagePayload.pagination, { hasMore: true, limit: 1, offset: 0 });
+  const secondPage = await fetch(`${baseUrl}/api/retrieval?limit=1&offset=1`);
+  const secondPagePayload = await secondPage.json();
+  assert.equal(secondPagePayload.results[0]?.title, "openai/codex");
+  assert.deepEqual(secondPagePayload.pagination, { hasMore: false, limit: 1, offset: 1 });
+
+  const emptyResponse = await fetch(`${baseUrl}/api/retrieval?topic=%E4%B8%8D%E5%AD%98%E5%9C%A8`);
+  const empty = await emptyResponse.json();
+  assert.equal(emptyResponse.status, 200);
+  assert.deepEqual(empty, { availability: "empty", pagination: { hasMore: false, limit: 20, offset: 0 }, results: [] });
+  assert.doesNotMatch(JSON.stringify(firstPagePayload), /unpublished/);
+  assert.doesNotMatch(JSON.stringify(secondPagePayload), /uncited/);
 });
