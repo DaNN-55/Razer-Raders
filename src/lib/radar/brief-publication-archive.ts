@@ -1,11 +1,13 @@
 import type { QueryResultRow } from "pg";
 import type { PublicationArchive, PublicationCandidate, PublishedSignalInput } from "./brief-publication.ts";
+import type { BriefProvenance } from "./brief-contract.ts";
 import { getDatabasePool, withTransaction } from "./database.ts";
 
 type CandidateRow = QueryResultRow & {
   canonical_identifier: string;
   evidence: PublicationCandidate["evidence"];
   priority: PublicationCandidate["priority"];
+  ranking_policy_version: string;
   ranking_score: number;
   selection_reason: string;
   signal_state: PublicationCandidate["signalState"];
@@ -25,7 +27,7 @@ export const postgresBriefPublicationArchive: PublicationArchive = {
   async getCandidatesForPublication() {
     const result = await getDatabasePool().query<CandidateRow>(
       `SELECT candidate.canonical_identifier, candidate.title, candidate.signal_state, candidate.priority,
-        candidate.ranking_score, candidate.selection_reason,
+        candidate.ranking_score, candidate.ranking_policy_version, candidate.selection_reason,
         jsonb_agg(jsonb_build_object(
           'canonicalIdentifier', evidence.canonical_identifier,
           'sourceName', evidence.source_name,
@@ -45,6 +47,7 @@ export const postgresBriefPublicationArchive: PublicationArchive = {
       canonicalIdentifier: candidate.canonical_identifier,
       evidence: candidate.evidence,
       priority: candidate.priority,
+      rankingPolicyVersion: candidate.ranking_policy_version,
       rankingScore: candidate.ranking_score,
       selectionReason: candidate.selection_reason,
       signalState: candidate.signal_state,
@@ -52,20 +55,33 @@ export const postgresBriefPublicationArchive: PublicationArchive = {
     }));
   },
 
-  async hasPublishedBrief() {
-    const result = await getDatabasePool().query("SELECT 1 FROM brief_snapshots WHERE status = 'published' LIMIT 1");
+  async hasPublishedBrief(publicationDay) {
+    const result = await getDatabasePool().query(
+      "SELECT 1 FROM brief_snapshots WHERE status = 'published' AND publication_day = $1 LIMIT 1",
+      [publicationDay],
+    );
     return (result.rowCount ?? 0) > 0;
   },
 
-  async publishBrief({ id, publishedAt, signals }: { id: string; publishedAt: string; signals: readonly PublishedSignalInput[] }) {
-    await withTransaction(async (client) => {
-      await client.query("SELECT pg_advisory_xact_lock(hashtext('razer-raders:first-published-brief'))");
-      const existing = await client.query("SELECT 1 FROM brief_snapshots WHERE status = 'published' LIMIT 1");
-      if (existing.rowCount) throw new Error("首份 Brief 已发布，拒绝覆盖不可变 Snapshot。");
+  async publishBrief({ id, provenance, publicationDay, publishedAt, signals }: { id: string; provenance: BriefProvenance; publicationDay: string; publishedAt: string; signals: readonly PublishedSignalInput[] }) {
+    return withTransaction(async (client) => {
+      await client.query("SELECT pg_advisory_xact_lock(hashtext('razer-raders:brief:' || $1))", [publicationDay]);
+      const existing = await client.query("SELECT 1 FROM brief_snapshots WHERE status = 'published' AND publication_day = $1 LIMIT 1", [publicationDay]);
+      if (existing.rowCount) return "already-published" as const;
 
       await client.query(
-        "INSERT INTO brief_snapshots (id, published_at, status) VALUES ($1, $2, 'published')",
-        [id, publishedAt],
+        `INSERT INTO brief_snapshots (
+          id, published_at, publication_day, status, configuration_version, ranking_policy_version, model_runtime_id, pipeline_version
+        ) VALUES ($1, $2, $3, 'published', $4, $5, $6, $7)`,
+        [
+          id,
+          publishedAt,
+          publicationDay,
+          provenance.configurationVersion,
+          provenance.rankingPolicyVersion,
+          provenance.modelRuntimeId,
+          provenance.pipelineVersion,
+        ],
       );
       for (const [index, signal] of signals.entries()) {
         await client.query(
@@ -98,6 +114,15 @@ export const postgresBriefPublicationArchive: PublicationArchive = {
         );
         await client.query("UPDATE radar_candidates SET evaluation_status = 'published', updated_at = NOW() WHERE id = $1", [signal.candidateId]);
       }
+      return "published" as const;
     });
+  },
+
+  async recordPipelineStage({ collectionRunId, detail, publicationDay, stage, status }) {
+    await getDatabasePool().query(
+      `INSERT INTO pipeline_runs (publication_day, collection_run_id, stage, status, detail, started_at, finished_at)
+      VALUES ($1, $2, $3, $4, $5, NOW(), CASE WHEN $4 = 'started' THEN NULL ELSE NOW() END)`,
+      [publicationDay, collectionRunId ?? null, stage, status, detail ?? null],
+    );
   },
 };

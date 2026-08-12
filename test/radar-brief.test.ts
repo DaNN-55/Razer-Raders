@@ -11,7 +11,11 @@ test("已发布 Daily Brief 与新 Candidate 评估队列并存时，不会把�
 
   const brief = createArchiveRadarBrief({
     assessment: { candidateCount: 2, status: "evaluating" },
-    brief: { publishedAt: "2026-08-12T01:00:00.000Z", signals: [publishedSignal] },
+    brief: {
+      publishedAt: "2026-08-12T01:00:00.000Z",
+      provenance: { configurationVersion: "profile@v1", modelRuntimeId: "compatible:fixture", pipelineVersion: "assessment-pipeline@v1", rankingPolicyVersion: "v0.1" },
+      signals: [publishedSignal],
+    },
     connectors: [{ caption: "公开趋势页", name: "GitHub Trending", status: "新鲜", tone: "fresh" }],
     topicOptions: ["全部主题"],
   });
@@ -28,7 +32,11 @@ test("Brief API 输出 evaluating 状态但只携带已发布 Snapshot", async (
   if (!publishedSignal) throw new Error("Fixture 缺少已发布 Radar Signal。");
   const payload = createArchiveRadarBrief({
     assessment: { candidateCount: 1, status: "evaluating" },
-    brief: { publishedAt: "2026-08-12T01:00:00.000Z", signals: [publishedSignal] },
+    brief: {
+      publishedAt: "2026-08-12T01:00:00.000Z",
+      provenance: { configurationVersion: "profile@v1", modelRuntimeId: "compatible:fixture", pipelineVersion: "assessment-pipeline@v1", rankingPolicyVersion: "v0.1" },
+      signals: [publishedSignal],
+    },
     connectors: [],
     topicOptions: ["全部主题"],
   });

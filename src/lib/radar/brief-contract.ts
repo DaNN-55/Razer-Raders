@@ -8,12 +8,20 @@ export type RadarConnector = {
   tone: string;
 };
 
+export type BriefProvenance = {
+  configurationVersion: string;
+  modelRuntimeId: string;
+  pipelineVersion: string;
+  rankingPolicyVersion: string;
+};
+
 export type RadarBrief = {
   availability: "evaluating" | "published" | "unpublished";
   connectors: readonly RadarConnector[];
   mode: "fixture" | "archive";
   pendingCandidateCount: number;
   publishedAt: string;
+  provenance?: BriefProvenance;
   signals: readonly Signal[];
   topicOptions: readonly string[];
 };
@@ -24,6 +32,7 @@ export type AssessmentState =
 
 export type PublishedBrief = {
   publishedAt: string;
+  provenance: BriefProvenance;
   signals: readonly Signal[];
 };
 
@@ -53,6 +62,7 @@ export function createArchiveRadarBrief(input: {
     mode: "archive",
     pendingCandidateCount: assessment.candidateCount,
     publishedAt: brief?.publishedAt ?? new Date().toISOString(),
+    ...(brief ? { provenance: brief.provenance } : {}),
     signals: brief?.signals ?? [],
     topicOptions,
   };

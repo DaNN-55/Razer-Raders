@@ -87,7 +87,7 @@ function getThemeServerSnapshot(): Theme {
 }
 
 export function RadarApp({ brief }: { brief: RadarBrief }) {
-  const { availability, connectors, mode, pendingCandidateCount, publishedAt, signals, topicOptions } = brief;
+  const { availability, connectors, mode, pendingCandidateCount, provenance, publishedAt, signals, topicOptions } = brief;
   const [view, setView] = useState<View>("brief");
   const [selectedId, setSelectedId] = useState<string | null>(signals[0]?.id ?? null);
   const [topic, setTopic] = useState("全部主题");
@@ -171,6 +171,7 @@ export function RadarApp({ brief }: { brief: RadarBrief }) {
             onSelectSignal={(id) => setSelectedId(id)}
             onToggleSaved={toggleSaved}
             pendingCandidateCount={pendingCandidateCount}
+            provenance={provenance}
             publishedAt={publishedAt}
             saved={saved}
             selectedSignal={selectedSignal}
@@ -227,6 +228,7 @@ function BriefView({
   onTogglePriority,
   onToggleSaved,
   pendingCandidateCount,
+  provenance,
   publishedAt,
   saved,
   selectedSignal,
@@ -246,6 +248,7 @@ function BriefView({
   onTogglePriority: () => void;
   onToggleSaved: (id: string) => void;
   pendingCandidateCount: number;
+  provenance?: RadarBrief["provenance"];
   publishedAt: string;
   saved: string[];
   selectedSignal: Signal | null;
@@ -276,7 +279,7 @@ function BriefView({
                 onClick={() => onSelectSignal(signal.id)}
                 signal={signal}
               />
-              {signal.id === selectedSignal?.id && <div className="inline-detail"><SignalDetail isSaved={saved.includes(signal.id)} mode={mode} onToggleSaved={() => onToggleSaved(signal.id)} signal={signal} /></div>}
+              {signal.id === selectedSignal?.id && <div className="inline-detail"><SignalDetail isSaved={saved.includes(signal.id)} mode={mode} onToggleSaved={() => onToggleSaved(signal.id)} provenance={provenance} signal={signal} /></div>}
             </div>
           )) : <EmptySignals availability={availability} hasAnySignals={hasAnySignals} onReset={() => onTopicChange("全部主题")} pendingCandidateCount={pendingCandidateCount} />}
         </div>
@@ -331,7 +334,7 @@ function SignalRow({ isSelected, onClick, signal }: { isSelected: boolean; onCli
   );
 }
 
-function SignalDetail({ isSaved, mode, onToggleSaved, signal }: { isSaved: boolean; mode: RadarBrief["mode"]; onToggleSaved: () => void; signal: Signal }) {
+function SignalDetail({ isSaved, mode, onToggleSaved, provenance, signal }: { isSaved: boolean; mode: RadarBrief["mode"]; onToggleSaved: () => void; provenance?: RadarBrief["provenance"]; signal: Signal }) {
   return (
     <div className="detail-inner">
       <div className="detail-grid">
@@ -354,7 +357,7 @@ function SignalDetail({ isSaved, mode, onToggleSaved, signal }: { isSaved: boole
               </a>
             ))}
           </section>
-          <p className="provenance">评估依据：默认 Radar Profile · Ranking Policy v0.1 · {mode === "archive" ? "已发布 Brief Snapshot" : "示例数据"}</p>
+          <p className="provenance">评估依据：{provenance ? `${provenance.configurationVersion} · ${provenance.rankingPolicyVersion} · ${provenance.modelRuntimeId} · ${provenance.pipelineVersion} · 已发布 Brief Snapshot` : mode === "archive" ? "等待已发布 Snapshot 的 Pipeline Provenance" : "示例数据"}</p>
         </div>
       </div>
     </div>

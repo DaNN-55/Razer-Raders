@@ -26,8 +26,12 @@ type SignalRow = QueryResultRow & {
 type ConnectorRow = QueryResultRow & RadarConnector;
 
 type BriefRow = QueryResultRow & {
+  configuration_version: string;
   id: string;
+  model_runtime_id: string;
+  pipeline_version: string;
   published_at: Date;
+  ranking_policy_version: string;
 };
 
 function createProductionArchiveReader() {
@@ -40,7 +44,13 @@ function createProductionArchiveReader() {
 
 export async function getLatestPublishedBrief(): Promise<PublishedBrief | null> {
   const database = getDatabasePool();
-  const brief = await database.query<BriefRow>("SELECT id, published_at FROM brief_snapshots WHERE status = 'published' ORDER BY published_at DESC LIMIT 1");
+  const brief = await database.query<BriefRow>(
+    `SELECT id, published_at, configuration_version, ranking_policy_version, model_runtime_id, pipeline_version
+    FROM brief_snapshots
+    WHERE status = 'published'
+    ORDER BY publication_day DESC
+    LIMIT 1`,
+  );
   const snapshot = brief.rows[0];
   if (!snapshot) return null;
 
@@ -55,6 +65,12 @@ export async function getLatestPublishedBrief(): Promise<PublishedBrief | null> 
 
   return {
     publishedAt: snapshot.published_at.toISOString(),
+    provenance: {
+      configurationVersion: snapshot.configuration_version,
+      modelRuntimeId: snapshot.model_runtime_id,
+      pipelineVersion: snapshot.pipeline_version,
+      rankingPolicyVersion: snapshot.ranking_policy_version,
+    },
     signals: signals.rows.map((signal) => ({
       builderValue: signal.builder_value,
       evidence: signal.evidence,

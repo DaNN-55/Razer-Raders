@@ -5,9 +5,12 @@ import { postgresBriefPublicationArchive } from "./lib/radar/brief-publication-a
 import { createBriefPublisher } from "./lib/radar/brief-publication.ts";
 import { createEnvironmentCandidateFilter } from "./lib/radar/candidate-filter.ts";
 import { createCitationAccessibilityCheck } from "./lib/radar/citation-accessibility.ts";
+import { recordCollectionCycle } from "./lib/radar/collection-stage-recorder.ts";
 import { createCompatibleRuntimeFromEnvironment } from "./lib/radar/compatible-runtime.ts";
+import { createDailyPublicationSchedule } from "./lib/radar/daily-publication-schedule.ts";
 import { githubTrendingConnector } from "./lib/radar/connectors/github-trending.ts";
 import { getDatabasePool } from "./lib/radar/database.ts";
+import { createTaskWorkerSchedule } from "./lib/radar/task-worker-schedule.ts";
 
 const defaultCollectionIntervalMs = 2 * 60 * 60 * 1000;
 
@@ -27,6 +30,11 @@ const assessmentPipeline = createAssessmentPipeline({
 
 async function collectGitHubTrendingIntoArchive() {
   const result = await assessmentPipeline.runCollectionCycle("github-trending");
+  await recordCollectionCycle({
+    archive: postgresBriefPublicationArchive,
+    clock: () => new Date(),
+    result,
+  });
   if (result.status === "succeeded") {
     console.log(`GitHub Trending 采集完成：${result.candidateCount} 个候选`);
   } else {
@@ -35,10 +43,19 @@ async function collectGitHubTrendingIntoArchive() {
   return result;
 }
 
-async function publishFirstBriefIfConfigured() {
+async function publishDailyBriefIfConfigured() {
   const runtime = createCompatibleRuntimeFromEnvironment();
   if (!runtime) {
-    console.log("Compatible Runtime 未配置，跳过首份日报发布。");
+    console.log("Compatible Runtime 未配置，跳过当日日报发布。");
+    const dueDay = createDailyPublicationSchedule(() => new Date()).getDuePublicationDay();
+    if (dueDay) {
+      await postgresBriefPublicationArchive.recordPipelineStage({
+        detail: "Compatible Runtime 未配置。",
+        publicationDay: dueDay,
+        stage: "assessment",
+        status: "failed",
+      });
+    }
     return { reason: "Compatible Runtime 未配置。", status: "rejected" as const };
   }
 
@@ -49,32 +66,41 @@ async function publishFirstBriefIfConfigured() {
   const result = await createBriefPublisher({
     archive: postgresBriefPublicationArchive,
     clock: () => new Date(),
+    configurationVersion: process.env.RADAR_CONFIGURATION_VERSION ?? "profile@v1",
     createBriefId: randomUUID,
     isCitationAccessible,
+    pipelineVersion: process.env.RADAR_PIPELINE_VERSION ?? "assessment-pipeline@v1",
     runtime,
-  }).publishFirstBrief();
-  if (result.status === "published") console.log(`首份日报已发布：${result.signalCount} 个信号`);
-  if (result.status === "rejected") console.error(`首份日报未发布：${result.reason}`);
+  }).publishDailyBrief();
+  if (result.status === "published") console.log(`日报已发布：${result.signalCount} 个信号`);
+  if (result.status === "rejected") console.error(`日报未发布：${result.reason}`);
   return result;
 }
 
+async function publishDailyBriefWhenDue() {
+  if (!createDailyPublicationSchedule(() => new Date()).getDuePublicationDay()) return;
+  await publishDailyBriefIfConfigured();
+}
+
 async function runWorker() {
-  const initialResult = await collectGitHubTrendingIntoArchive();
-  if (initialResult.status === "succeeded" && process.env.RADAR_PUBLISH_FIRST_BRIEF === "true") {
-    await publishFirstBriefIfConfigured();
-  }
+  const schedule = createTaskWorkerSchedule({
+    clock: () => new Date(),
+    collectionIntervalMs: getCollectionIntervalMs(),
+    collect: async () => (await collectGitHubTrendingIntoArchive()).status,
+    onError: (error) => console.error("Task Worker 任务失败：", error),
+    publish: publishDailyBriefWhenDue,
+    timers: { clearInterval, clearTimeout, setInterval, setTimeout },
+  });
   if (process.env.RADAR_WORKER_ONCE === "true") {
-    if (initialResult.status === "failed") process.exitCode = 1;
+    if (await schedule.runOnce() === "failed") process.exitCode = 1;
     await getDatabasePool().end();
     return;
   }
 
-  const interval = setInterval(() => {
-    void collectGitHubTrendingIntoArchive().catch((error: unknown) => console.error(error));
-  }, getCollectionIntervalMs());
+  await schedule.start();
 
   const shutdown = async () => {
-    clearInterval(interval);
+    schedule.stop();
     await getDatabasePool().end();
     process.exit(0);
   };
