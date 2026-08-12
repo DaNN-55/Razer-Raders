@@ -47,7 +47,7 @@ export const postgresAssessmentPipelineArchive: AssessmentPipelineArchive = {
   },
 
   async upsertCandidate(candidate: Candidate) {
-    const subjectId = `subject:${candidate.canonicalIdentifier}`;
+    const subjectId = `subject:${candidate.subjectCanonicalIdentifier}`;
     const candidateId = candidate.canonicalIdentifier;
     await withTransaction(async (client) => {
       await client.query(
@@ -55,13 +55,13 @@ export const postgresAssessmentPipelineArchive: AssessmentPipelineArchive = {
         VALUES ($1, $2, $3, $4)
         ON CONFLICT (canonical_identifier)
         DO UPDATE SET title = EXCLUDED.title, signal_type = EXCLUDED.signal_type, updated_at = NOW()`,
-        [subjectId, candidate.canonicalIdentifier, candidate.title, candidate.signalType],
+        [subjectId, candidate.subjectCanonicalIdentifier, candidate.title, candidate.signalType],
       );
       await client.query(
-        `INSERT INTO radar_candidates (id, canonical_identifier, connector_id, subject_id, signal_type, title, source_url,
+        `INSERT INTO radar_candidates (id, canonical_identifier, subject_canonical_identifier, connector_id, subject_id, signal_type, title, source_url,
           first_collected_at, last_collected_at, evaluation_status, signal_state, priority, ranking_score, ranking_policy_version,
           observation_count, selection_reason)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, 'evaluating', '新出现', '值得关注', 1, 'v0.1', 1, $9)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9, 'evaluating', '新出现', '值得关注', 1, 'v0.1', 1, $10)
         ON CONFLICT (canonical_identifier)
         DO UPDATE SET connector_id = EXCLUDED.connector_id, title = EXCLUDED.title, source_url = EXCLUDED.source_url,
           last_collected_at = EXCLUDED.last_collected_at, observation_count = radar_candidates.observation_count + 1,
@@ -72,6 +72,7 @@ export const postgresAssessmentPipelineArchive: AssessmentPipelineArchive = {
         [
           candidateId,
           candidate.canonicalIdentifier,
+          candidate.subjectCanonicalIdentifier,
           candidate.connectorId,
           subjectId,
           candidate.signalType,

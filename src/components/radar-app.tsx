@@ -15,6 +15,7 @@ import {
   SettingsIcon,
   SunIcon,
 } from "@/components/icons";
+import { getAssessmentBanner, getBriefHeading } from "@/components/brief-presentation";
 import { type Signal } from "@/components/radar-data";
 import { type RadarBrief, type RadarConnector } from "@/lib/radar/brief";
 
@@ -251,13 +252,17 @@ function BriefView({
   onTopicChange: (topic: string) => void;
   topicOptions: readonly string[];
 }) {
+  const presentation = { availability, hasPublishedSignals: hasAnySignals, pendingCandidateCount, visibleSignalCount: visibleSignals.length };
+  const assessmentBanner = getAssessmentBanner(presentation);
+
   return (
     <div className="brief-layout">
       <section className="brief-column">
         <header className="page-header">
           <p className="eyeline">{formatPublishedAt(publishedAt)}</p>
-          <h1>{availability === "evaluating" && !hasAnySignals ? `正在评估 ${pendingCandidateCount} 个 AI 候选` : `今天，值得你分心的 ${visibleSignals.length} 个 AI 信号`}</h1>
+          <h1>{getBriefHeading(presentation)}</h1>
           <p>从 7 天观察窗口中筛出有证据、可行动的变化。未验证的判断会明确标注。</p>
+          {assessmentBanner ? <p className="assessment-banner">{assessmentBanner}</p> : null}
         </header>
 
         <div className="signal-list" aria-label="今日雷达短名单">

@@ -9,6 +9,7 @@ const candidate: Candidate = {
   connectorId: "github-trending",
   evidence: [],
   signalType: "project",
+  subjectCanonicalIdentifier: "github:openai/codex",
   title: "openai/codex",
   url: "https://github.com/openai/codex",
 };

@@ -1,5 +1,4 @@
 import { getRadarBrief } from "@/lib/radar/brief";
+import { createBriefGetHandler } from "@/lib/radar/brief-route";
 
-export async function GET() {
-  return Response.json(await getRadarBrief());
-}
+export const GET = createBriefGetHandler(getRadarBrief);

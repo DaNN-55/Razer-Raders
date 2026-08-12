@@ -82,6 +82,7 @@ function collectionResult(collectedAt: string): CollectionResult {
       connectorId: evidence.connectorId,
       evidence: [evidence],
       signalType: "project",
+      subjectCanonicalIdentifier: evidence.canonicalIdentifier,
       title: "openai/codex",
       url: evidence.sourceUrl,
     }],
@@ -167,6 +168,45 @@ test("Canonical Identifier 不一致的 Source Evidence 保留为关联证据，
     candidateId: "github:openai/codex",
     evidence: relatedEvidence,
   }]);
+});
+
+test("同一 Radar Subject 的不同 Candidate 分别保留，不会因 Subject 相同而覆盖", async () => {
+  const archive = new InMemoryRadarArchive();
+  const first = collectionResult("2026-08-12T08:00:00.000Z").candidates[0]!;
+  const second: Candidate = {
+    ...first,
+    canonicalIdentifier: "github:openai/codex:release-2026-08-12",
+    evidence: [{
+      ...first.evidence[0]!,
+      canonicalIdentifier: "github:openai/codex:release-2026-08-12",
+      sourceUrl: "https://github.com/openai/codex/releases/tag/2026-08-12",
+    }],
+    subjectCanonicalIdentifier: "github:openai/codex",
+    title: "openai/codex 2026-08-12 release",
+    url: "https://github.com/openai/codex/releases/tag/2026-08-12",
+  };
+  const connector: SourceConnector = {
+    id: "github-trending",
+    collect: async () => ({
+      ...collectionResult("2026-08-12T08:00:00.000Z"),
+      candidates: [first, second],
+    }),
+  };
+  const pipeline = createAssessmentPipeline({
+    archive,
+    clock: () => new Date("2026-08-12T08:00:01.000Z"),
+    createRunId: () => "same-subject-run",
+    modelRuntime: fixtureRuntime,
+    sourceConnectors: [connector],
+  });
+
+  await pipeline.runCollectionCycle("github-trending");
+
+  assert.equal(archive.candidates.size, 2);
+  assert.deepEqual([...archive.candidates.values()].map((candidate) => candidate.subjectCanonicalIdentifier), [
+    "github:openai/codex",
+    "github:openai/codex",
+  ]);
 });
 
 test("Candidate Filter 会阻止不在 Radar Profile 范围内的 Candidate 及其 Source Evidence 进入评估归档", async () => {

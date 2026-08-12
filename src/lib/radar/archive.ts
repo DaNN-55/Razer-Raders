@@ -1,7 +1,8 @@
 import type { QueryResultRow } from "pg";
 import type { Evidence, Signal } from "@/components/radar-data";
 import { getDatabasePool } from "@/lib/radar/database";
-import type { RadarConnector } from "@/lib/radar/brief";
+import { createArchiveReader, type ArchiveQuery } from "@/lib/radar/archive-reader";
+import type { AssessmentState, PublishedBrief, RadarConnector } from "@/lib/radar/brief-contract";
 
 type SignalRow = QueryResultRow & {
   builder_value: Signal["builderValue"];
@@ -28,21 +29,15 @@ type BriefRow = QueryResultRow & {
   published_at: Date;
 };
 
-type AssessmentStateRow = QueryResultRow & {
-  candidate_count: number;
-};
+function createProductionArchiveReader() {
+  const database = getDatabasePool();
+  return createArchiveReader({
+    now: () => new Date(),
+    query: ((text, values) => database.query(text, values as unknown[])) as ArchiveQuery,
+  });
+}
 
-type EvaluatingCandidateRow = QueryResultRow & {
-  canonical_identifier: string;
-  last_collected_at: Date;
-  priority: string;
-  ranking_score: number;
-  selection_reason: string;
-  signal_state: string;
-  title: string;
-};
-
-export async function getLatestPublishedBrief() {
+export async function getLatestPublishedBrief(): Promise<PublishedBrief | null> {
   const database = getDatabasePool();
   const brief = await database.query<BriefRow>("SELECT id, published_at FROM brief_snapshots WHERE status = 'published' ORDER BY published_at DESC LIMIT 1");
   const snapshot = brief.rows[0];
@@ -88,40 +83,10 @@ export async function getConnectorHealth(): Promise<readonly RadarConnector[]> {
   return result.rows;
 }
 
-export async function getAssessmentState() {
-  const database = getDatabasePool();
-  const result = await database.query<AssessmentStateRow>(
-    `SELECT COUNT(*)::integer AS candidate_count
-    FROM radar_candidates
-    WHERE evaluation_status = 'evaluating'
-      AND last_collected_at >= NOW() - INTERVAL '7 days'`,
-  );
-  const candidateCount = result.rows[0]?.candidate_count ?? 0;
-
-  return candidateCount > 0
-    ? { candidateCount, status: "evaluating" as const }
-    : { candidateCount: 0, status: "unpublished" as const };
+export async function getAssessmentState(): Promise<AssessmentState> {
+  return createProductionArchiveReader().getAssessmentState();
 }
 
 export async function getEvaluatingCandidates(limit = 50) {
-  const database = getDatabasePool();
-  const result = await database.query<EvaluatingCandidateRow>(
-    `SELECT canonical_identifier, title, signal_state, priority, ranking_score, selection_reason, last_collected_at
-    FROM radar_candidates
-    WHERE evaluation_status = 'evaluating'
-      AND last_collected_at >= NOW() - INTERVAL '7 days'
-    ORDER BY ranking_score DESC, last_collected_at DESC
-    LIMIT $1`,
-    [limit],
-  );
-
-  return result.rows.map((candidate) => ({
-    canonicalIdentifier: candidate.canonical_identifier,
-    lastCollectedAt: candidate.last_collected_at.toISOString(),
-    priority: candidate.priority,
-    rankingScore: candidate.ranking_score,
-    selectionReason: candidate.selection_reason,
-    signalState: candidate.signal_state,
-    title: candidate.title,
-  }));
+  return createProductionArchiveReader().getEvaluatingCandidates(limit);
 }

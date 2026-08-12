@@ -17,6 +17,7 @@ export type Candidate = {
   connectorId: ConnectorId;
   evidence: readonly SourceEvidence[];
   signalType: SignalType;
+  subjectCanonicalIdentifier: string;
   title: string;
   url: string;
 };

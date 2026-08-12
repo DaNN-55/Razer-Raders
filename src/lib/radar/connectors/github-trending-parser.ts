@@ -26,6 +26,7 @@ export function parseGitHubTrendingPage(html: string, collectedAt: string): read
         trust: "untrusted",
       }],
       signalType: "project",
+      subjectCanonicalIdentifier: `github:${repository.toLowerCase()}`,
       title: repository,
       url,
     });
