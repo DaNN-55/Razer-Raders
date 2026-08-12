@@ -86,7 +86,7 @@ function getThemeServerSnapshot(): Theme {
 }
 
 export function RadarApp({ brief }: { brief: RadarBrief }) {
-  const { connectors, publishedAt, signals, topicOptions } = brief;
+  const { availability, connectors, pendingCandidateCount, publishedAt, signals, topicOptions } = brief;
   const [view, setView] = useState<View>("brief");
   const [selectedId, setSelectedId] = useState<string | null>(signals[0]?.id ?? null);
   const [topic, setTopic] = useState("全部主题");
@@ -162,11 +162,13 @@ export function RadarApp({ brief }: { brief: RadarBrief }) {
         {view === "brief" && (
           <BriefView
             connectors={connectors}
+            availability={availability}
             filterOpen={filterOpen}
             hasAnySignals={signals.length > 0}
             onCloseFilter={() => setFilterOpen(false)}
             onSelectSignal={(id) => setSelectedId(id)}
             onToggleSaved={toggleSaved}
+            pendingCandidateCount={pendingCandidateCount}
             publishedAt={publishedAt}
             saved={saved}
             selectedSignal={selectedSignal}
@@ -213,6 +215,7 @@ function ThemeToggle({ compact = false, onToggle, theme }: { compact?: boolean; 
 }
 
 function BriefView({
+  availability,
   connectors,
   filterOpen,
   hasAnySignals,
@@ -220,6 +223,7 @@ function BriefView({
   onSelectSignal,
   onTogglePriority,
   onToggleSaved,
+  pendingCandidateCount,
   publishedAt,
   saved,
   selectedSignal,
@@ -229,6 +233,7 @@ function BriefView({
   onTopicChange,
   topicOptions,
 }: {
+  availability: RadarBrief["availability"];
   connectors: readonly RadarConnector[];
   filterOpen: boolean;
   hasAnySignals: boolean;
@@ -236,6 +241,7 @@ function BriefView({
   onSelectSignal: (id: string) => void;
   onTogglePriority: () => void;
   onToggleSaved: (id: string) => void;
+  pendingCandidateCount: number;
   publishedAt: string;
   saved: string[];
   selectedSignal: Signal | null;
@@ -250,7 +256,7 @@ function BriefView({
       <section className="brief-column">
         <header className="page-header">
           <p className="eyeline">{formatPublishedAt(publishedAt)}</p>
-          <h1>今天，值得你分心的 {visibleSignals.length} 个 AI 信号</h1>
+          <h1>{availability === "evaluating" && !hasAnySignals ? `正在评估 ${pendingCandidateCount} 个 AI 候选` : `今天，值得你分心的 ${visibleSignals.length} 个 AI 信号`}</h1>
           <p>从 7 天观察窗口中筛出有证据、可行动的变化。未验证的判断会明确标注。</p>
         </header>
 
@@ -264,7 +270,7 @@ function BriefView({
               />
               {signal.id === selectedSignal?.id && <div className="inline-detail"><SignalDetail isSaved={saved.includes(signal.id)} onToggleSaved={() => onToggleSaved(signal.id)} signal={signal} /></div>}
             </div>
-          )) : <EmptySignals hasAnySignals={hasAnySignals} onReset={() => onTopicChange("全部主题")} />}
+          )) : <EmptySignals availability={availability} hasAnySignals={hasAnySignals} onReset={() => onTopicChange("全部主题")} pendingCandidateCount={pendingCandidateCount} />}
         </div>
       </section>
 
@@ -415,8 +421,12 @@ function ConfigView({ connectors }: { connectors: readonly RadarConnector[] }) {
 
 function Fieldset({ children, number, title }: { children: React.ReactNode; number: string; title: string }) { return <fieldset><legend><span>{number}</span>{title}</legend>{children}</fieldset>; }
 
-function EmptySignals({ hasAnySignals, onReset }: { hasAnySignals: boolean; onReset: () => void }) {
+function EmptySignals({ availability, hasAnySignals, onReset, pendingCandidateCount }: { availability: RadarBrief["availability"]; hasAnySignals: boolean; onReset: () => void; pendingCandidateCount: number }) {
   if (!hasAnySignals) {
+    if (availability === "evaluating") {
+      return <div className="empty-state"><RadarIcon size={30} /><h2>正在评估 {pendingCandidateCount} 个候选</h2><p>这些 Candidate 已进入 Radar Archive；完成证据补充、排序和发布校验后，才会出现在 Daily Brief。</p></div>;
+    }
+
     return <div className="empty-state"><RadarIcon size={30} /><h2>首份日报尚未发布</h2><p>完成采集、筛选和发布后，值得关注的 AI 信号会显示在这里。</p></div>;
   }
 

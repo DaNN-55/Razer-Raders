@@ -1,4 +1,4 @@
-import type { CollectionResult, ConnectorId, SourceEvidence } from "./connectors/types.ts";
+import type { Candidate, CollectionResult, ConnectorId, SourceEvidence } from "./connectors/types.ts";
 
 export type ModelRuntime = {
   id: string;
@@ -15,11 +15,13 @@ export type AssessmentPipelineArchive = {
   markConnectorFresh: (input: { collectedAt: string; connectorId: ConnectorId }) => Promise<void>;
   startCollectionRun: (input: { connectorId: ConnectorId; runId: string; startedAt: string }) => Promise<void>;
   succeedCollectionRun: (input: { candidateCount: number; finishedAt: string; runId: string }) => Promise<void>;
+  upsertCandidate: (candidate: Candidate) => Promise<void>;
   upsertSourceEvidence: (evidence: SourceEvidence) => Promise<void>;
 };
 
 export type AssessmentPipelineDependencies = {
   archive: AssessmentPipelineArchive;
+  candidateFilter?: (candidate: Candidate) => boolean;
   clock: () => Date;
   createRunId: () => string;
   modelRuntime: ModelRuntime;
@@ -35,7 +37,7 @@ function errorMessage(error: unknown) {
 }
 
 export function createAssessmentPipeline(dependencies: AssessmentPipelineDependencies) {
-  const { archive, clock, createRunId, sourceConnectors } = dependencies;
+  const { archive, candidateFilter = () => true, clock, createRunId, sourceConnectors } = dependencies;
   const connectors = new Map(sourceConnectors.map((connector) => [connector.id, connector]));
 
   return {
@@ -53,6 +55,9 @@ export function createAssessmentPipeline(dependencies: AssessmentPipelineDepende
         }
 
         for (const candidate of collection.candidates) {
+          if (!candidateFilter(candidate)) continue;
+
+          await archive.upsertCandidate(candidate);
           for (const evidence of candidate.evidence) {
             await archive.upsertSourceEvidence(evidence);
           }

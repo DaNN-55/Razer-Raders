@@ -6,7 +6,7 @@ import {
   type ModelRuntime,
   type SourceConnector,
 } from "../src/lib/radar/assessment-pipeline.ts";
-import type { CollectionResult, SourceEvidence } from "../src/lib/radar/connectors/types.ts";
+import type { Candidate, CollectionResult, SourceEvidence } from "../src/lib/radar/connectors/types.ts";
 
 type RecordedRun = {
   candidateCount: number;
@@ -19,6 +19,7 @@ type RecordedRun = {
 };
 
 class InMemoryRadarArchive implements AssessmentPipelineArchive {
+  readonly candidates = new Map<string, Candidate>();
   readonly connectorHealth = new Map<string, { detail: string | null; lastSuccessAt: string | null; status: string; tone: string }>();
   readonly evidence = new Map<string, SourceEvidence>();
   readonly runs = new Map<string, RecordedRun>();
@@ -53,6 +54,10 @@ class InMemoryRadarArchive implements AssessmentPipelineArchive {
 
   async upsertSourceEvidence(evidence: SourceEvidence) {
     this.evidence.set(`${evidence.canonicalIdentifier}:${evidence.connectorId}:${evidence.sourceUrl}`, evidence);
+  }
+
+  async upsertCandidate(candidate: Candidate) {
+    this.candidates.set(candidate.canonicalIdentifier, candidate);
   }
 }
 
@@ -116,6 +121,7 @@ test("固定 Connector Fixture 在重复采集后保留一条 Source Evidence，
   assert.deepEqual(first, { candidateCount: 1, connectorId: "github-trending", runId: "run-1", status: "succeeded" });
   assert.deepEqual(second, { candidateCount: 1, connectorId: "github-trending", runId: "run-2", status: "succeeded" });
   assert.equal(archive.evidence.size, 1);
+  assert.equal(archive.candidates.size, 1);
   assert.equal([...archive.evidence.values()][0]?.collectedAt, "2026-08-12T03:00:00.000Z");
   assert.deepEqual(archive.connectorHealth.get("github-trending"), {
     detail: null,
@@ -127,6 +133,28 @@ test("固定 Connector Fixture 在重复采集后保留一条 Source Evidence，
     { candidateCount: 1, id: "run-1", status: "succeeded" },
     { candidateCount: 1, id: "run-2", status: "succeeded" },
   ]);
+});
+
+test("Candidate Filter 会阻止不在 Radar Profile 范围内的 Candidate 及其 Source Evidence 进入评估归档", async () => {
+  const archive = new InMemoryRadarArchive();
+  const connector: SourceConnector = {
+    id: "github-trending",
+    collect: async () => collectionResult("2026-08-12T07:00:00.000Z"),
+  };
+  const pipeline = createAssessmentPipeline({
+    archive,
+    candidateFilter: () => false,
+    clock: () => new Date("2026-08-12T07:00:01.000Z"),
+    createRunId: () => "filtered-run",
+    modelRuntime: fixtureRuntime,
+    sourceConnectors: [connector],
+  });
+
+  const result = await pipeline.runCollectionCycle("github-trending");
+
+  assert.deepEqual(result, { candidateCount: 1, connectorId: "github-trending", runId: "filtered-run", status: "succeeded" });
+  assert.equal(archive.candidates.size, 0);
+  assert.equal(archive.evidence.size, 0);
 });
 
 test("Connector Fixture 失败时记录失败运行和 Connector Health，而不把错误交给 Web 请求", async () => {

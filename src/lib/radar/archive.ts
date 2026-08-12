@@ -28,6 +28,10 @@ type BriefRow = QueryResultRow & {
   published_at: Date;
 };
 
+type AssessmentStateRow = QueryResultRow & {
+  candidate_count: number;
+};
+
 export async function getLatestPublishedBrief() {
   const database = getDatabasePool();
   const brief = await database.query<BriefRow>("SELECT id, published_at FROM brief_snapshots WHERE status = 'published' ORDER BY published_at DESC LIMIT 1");
@@ -72,4 +76,19 @@ export async function getConnectorHealth(): Promise<readonly RadarConnector[]> {
   );
 
   return result.rows;
+}
+
+export async function getAssessmentState() {
+  const database = getDatabasePool();
+  const result = await database.query<AssessmentStateRow>(
+    `SELECT COUNT(*)::integer AS candidate_count
+    FROM radar_candidates
+    WHERE evaluation_status = 'evaluating'
+      AND last_collected_at >= NOW() - INTERVAL '7 days'`,
+  );
+  const candidateCount = result.rows[0]?.candidate_count ?? 0;
+
+  return candidateCount > 0
+    ? { candidateCount, status: "evaluating" as const }
+    : { candidateCount: 0, status: "unpublished" as const };
 }
