@@ -25,3 +25,26 @@ test("采集结束后按 CST 日期将结果和 Collection Run 关联到 Pipelin
     status: "succeeded",
   }]);
 });
+
+test("部分条目失败会写入 Collection 阶段记录", async () => {
+  const events: Parameters<PublicationArchive["recordPipelineStage"]>[0][] = [];
+  await recordCollectionCycle({
+    archive: {
+      getCandidatesForPublication: async () => [],
+      hasPublishedBrief: async () => false,
+      markCandidateAssessmentDelayed: async () => undefined,
+      publishBrief: async () => "published",
+      recordPipelineStage: async (event) => { events.push(event); },
+    },
+    clock: () => new Date("2026-08-12T01:00:00.000Z"),
+    result: {
+      candidateCount: 1,
+      connectorId: "official-watchlist",
+      runId: "collection-run-partial",
+      status: "succeeded",
+      warnings: ["OpenAI Release：HTTP 503"],
+    },
+  });
+
+  assert.equal(events[0]?.detail, "保留 1 个 Candidate；部分条目失败：OpenAI Release：HTTP 503");
+});

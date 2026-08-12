@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { createAssessmentPipeline } from "./lib/radar/assessment-pipeline.ts";
+import { createAssessmentPipeline, type SourceConnector } from "./lib/radar/assessment-pipeline.ts";
 import { postgresAssessmentPipelineArchive } from "./lib/radar/assessment-pipeline-archive.ts";
 import { postgresBriefPublicationArchive } from "./lib/radar/brief-publication-archive.ts";
 import { createBriefPublisher } from "./lib/radar/brief-publication.ts";
@@ -9,6 +9,7 @@ import { recordCollectionCycle } from "./lib/radar/collection-stage-recorder.ts"
 import { createDailyPublicationSchedule } from "./lib/radar/daily-publication-schedule.ts";
 import { githubTrendingConnector } from "./lib/radar/connectors/github-trending.ts";
 import { huggingFaceTrendingConnector } from "./lib/radar/connectors/hugging-face-trending.ts";
+import { createOfficialReleaseWatchlistConnector, readOfficialReleaseWatchlist } from "./lib/radar/connectors/official-release-watchlist.ts";
 import { showHnConnector } from "./lib/radar/connectors/show-hn.ts";
 import type { ConnectorId } from "./lib/radar/connectors/types.ts";
 import { getDatabasePool } from "./lib/radar/database.ts";
@@ -16,6 +17,27 @@ import { createModelRuntimeFromEnvironment } from "./lib/radar/model-runtime.ts"
 import { createTaskWorkerSchedule } from "./lib/radar/task-worker-schedule.ts";
 
 const defaultCollectionIntervalMs = 2 * 60 * 60 * 1000;
+
+function createConfiguredOfficialWatchlistConnector(): SourceConnector | null {
+  try {
+    const entries = readOfficialReleaseWatchlist();
+    return entries.length > 0 ? createOfficialReleaseWatchlistConnector(entries) : null;
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "Official Release Watchlist 配置无效。";
+    return {
+      collect: async () => { throw new Error(detail); },
+      id: "official-watchlist",
+    };
+  }
+}
+
+const officialWatchlistConnector = createConfiguredOfficialWatchlistConnector();
+const sourceConnectors = [
+  githubTrendingConnector,
+  huggingFaceTrendingConnector,
+  showHnConnector,
+  ...(officialWatchlistConnector ? [officialWatchlistConnector] : []),
+];
 
 function getCollectionIntervalMs() {
   const configured = Number(process.env.RADAR_COLLECTION_INTERVAL_MS ?? defaultCollectionIntervalMs);
@@ -28,7 +50,7 @@ const assessmentPipeline = createAssessmentPipeline({
   clock: () => new Date(),
   createRunId: randomUUID,
   modelRuntime: { id: process.env.RADAR_MODEL_RUNTIME_ID ?? "not-configured" },
-  sourceConnectors: [githubTrendingConnector, huggingFaceTrendingConnector, showHnConnector],
+  sourceConnectors,
 });
 
 async function collectSourceIntoArchive(connectorId: ConnectorId) {
@@ -51,6 +73,7 @@ async function collectConfiguredSources() {
     collectSourceIntoArchive("github-trending"),
     collectSourceIntoArchive("hugging-face-trending"),
     collectSourceIntoArchive("show-hn"),
+    ...(officialWatchlistConnector ? [collectSourceIntoArchive("official-watchlist")] : []),
   ]);
   return results.some((result) => result.status === "succeeded") ? "succeeded" as const : "failed" as const;
 }

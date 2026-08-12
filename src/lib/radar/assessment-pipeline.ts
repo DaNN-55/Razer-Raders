@@ -12,7 +12,7 @@ export type SourceConnector = {
 export type AssessmentPipelineArchive = {
   failCollectionRun: (input: { errorMessage: string; finishedAt: string; runId: string }) => Promise<void>;
   markConnectorFailed: (input: { connectorId: ConnectorId; detail: string }) => Promise<void>;
-  markConnectorFresh: (input: { collectedAt: string; connectorId: ConnectorId }) => Promise<void>;
+  markConnectorFresh: (input: { collectedAt: string; connectorId: ConnectorId; detail?: string }) => Promise<void>;
   startCollectionRun: (input: { connectorId: ConnectorId; runId: string; startedAt: string }) => Promise<void>;
   succeedCollectionRun: (input: { candidateCount: number; finishedAt: string; runId: string }) => Promise<void>;
   upsertCandidate: (candidate: Candidate) => Promise<{ id: string }>;
@@ -29,7 +29,7 @@ export type AssessmentPipelineDependencies = {
 };
 
 export type CollectionCycleResult =
-  | { candidateCount: number; connectorId: ConnectorId; runId: string; status: "succeeded" }
+  | { candidateCount: number; connectorId: ConnectorId; runId: string; status: "succeeded"; warnings?: readonly string[] }
   | { connectorId: ConnectorId; errorMessage: string; runId: string; status: "failed" };
 
 function errorMessage(error: unknown) {
@@ -72,9 +72,14 @@ export function createAssessmentPipeline(dependencies: AssessmentPipelineDepende
           finishedAt: clock().toISOString(),
           runId,
         });
-        await archive.markConnectorFresh({ collectedAt: collection.collectedAt, connectorId });
+        const warnings = collection.warnings.length > 0 ? collection.warnings : undefined;
+        await archive.markConnectorFresh({
+          collectedAt: collection.collectedAt,
+          connectorId,
+          ...(warnings ? { detail: warnings.join("；") } : {}),
+        });
 
-        return { candidateCount: retainedCandidates.length, connectorId, runId, status: "succeeded" };
+        return { candidateCount: retainedCandidates.length, connectorId, runId, status: "succeeded", ...(warnings ? { warnings } : {}) };
       } catch (error) {
         const message = errorMessage(error);
         await archive.failCollectionRun({ errorMessage: message, finishedAt: clock().toISOString(), runId });

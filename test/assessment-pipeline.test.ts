@@ -36,8 +36,13 @@ class InMemoryRadarArchive implements AssessmentPipelineArchive {
     this.connectorHealth.set(input.connectorId, { detail: input.detail, lastSuccessAt: null, status: "采集失败", tone: "muted" });
   }
 
-  async markConnectorFresh(input: { collectedAt: string; connectorId: string }) {
-    this.connectorHealth.set(input.connectorId, { detail: null, lastSuccessAt: input.collectedAt, status: "新鲜", tone: "fresh" });
+  async markConnectorFresh(input: { collectedAt: string; connectorId: string; detail?: string }) {
+    this.connectorHealth.set(input.connectorId, {
+      detail: input.detail ?? null,
+      lastSuccessAt: input.collectedAt,
+      status: input.detail ? "部分失败" : "新鲜",
+      tone: input.detail ? "delayed" : "fresh",
+    });
   }
 
   async startCollectionRun(input: { connectorId: string; runId: string; startedAt: string }) {
@@ -137,6 +142,42 @@ test("固定 Connector Fixture 在重复采集后保留一条 Source Evidence，
     { candidateCount: 1, id: "run-1", status: "succeeded" },
     { candidateCount: 1, id: "run-2", status: "succeeded" },
   ]);
+});
+
+test("Connector 的部分采集警告会保留在 Health 状态中", async () => {
+  const archive = new InMemoryRadarArchive();
+  const collection = collectionResult("2026-08-12T04:00:00.000Z");
+  const candidate = collection.candidates[0]!;
+  const officialCandidate: Candidate = {
+    ...candidate,
+    connectorId: "official-watchlist",
+    evidence: candidate.evidence.map((evidence) => ({ ...evidence, connectorId: "official-watchlist" })),
+  };
+  const connector: SourceConnector = {
+    collect: async () => ({ ...collection, candidates: [officialCandidate], connectorId: "official-watchlist", warnings: ["OpenAI Release：HTTP 503"] }),
+    id: "official-watchlist",
+  };
+  const result = await createAssessmentPipeline({
+    archive,
+    clock: () => new Date("2026-08-12T04:00:01.000Z"),
+    createRunId: () => "partial-run",
+    modelRuntime: fixtureRuntime,
+    sourceConnectors: [connector],
+  }).runCollectionCycle("official-watchlist");
+
+  assert.deepEqual(result, {
+    candidateCount: 1,
+    connectorId: "official-watchlist",
+    runId: "partial-run",
+    status: "succeeded",
+    warnings: ["OpenAI Release：HTTP 503"],
+  });
+  assert.deepEqual(archive.connectorHealth.get("official-watchlist"), {
+    detail: "OpenAI Release：HTTP 503",
+    lastSuccessAt: "2026-08-12T04:00:00.000Z",
+    status: "部分失败",
+    tone: "delayed",
+  });
 });
 
 test("Canonical Identifier 不一致的 Source Evidence 保留为关联证据，而不强制合并 Candidate", async () => {

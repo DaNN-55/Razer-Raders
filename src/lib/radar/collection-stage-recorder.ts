@@ -8,9 +8,14 @@ export async function recordCollectionCycle(input: {
   result: CollectionCycleResult;
 }) {
   const { archive, clock, result } = input;
+  const detail = result.status === "failed"
+    ? result.errorMessage
+    : result.warnings?.length
+      ? `保留 ${result.candidateCount} 个 Candidate；部分条目失败：${result.warnings.join("；")}`
+      : `保留 ${result.candidateCount} 个 Candidate。`;
   await archive.recordPipelineStage({
     collectionRunId: result.runId,
-    detail: result.status === "failed" ? result.errorMessage : `保留 ${result.candidateCount} 个 Candidate。`,
+    detail,
     publicationDay: getCstDay(clock()),
     stage: "collection",
     status: result.status,

@@ -21,11 +21,16 @@ export const postgresAssessmentPipelineArchive: AssessmentPipelineArchive = {
     });
   },
 
-  async markConnectorFresh({ collectedAt, connectorId }) {
+  async markConnectorFresh({ collectedAt, connectorId, detail }) {
     await withTransaction(async (client) => {
       await client.query(
-        "UPDATE connector_health SET status = '新鲜', tone = 'fresh', last_success_at = $2, detail = NULL WHERE connector_id = $1",
-        [connectorId, collectedAt],
+        `UPDATE connector_health
+        SET status = CASE WHEN $3::text IS NULL THEN '新鲜' ELSE '部分失败' END,
+          tone = CASE WHEN $3::text IS NULL THEN 'fresh' ELSE 'delayed' END,
+          last_success_at = $2,
+          detail = $3
+        WHERE connector_id = $1`,
+        [connectorId, collectedAt, detail ?? null],
       );
     });
   },
