@@ -35,3 +35,14 @@ test("引用检查仅在网络异常时重试，随后成功才放行", async ()
   assert.equal(await isAccessible("https://github.com/openai/codex"), true);
   assert.equal(attempts, 2);
 });
+
+test("引用检查在连续网络异常后最多尝试三次", async () => {
+  let attempts = 0;
+  const isAccessible = createCitationAccessibilityCheck(["https://github.com/openai/codex"], async () => {
+    attempts += 1;
+    throw new TypeError("fetch failed");
+  });
+
+  assert.equal(await isAccessible("https://github.com/openai/codex"), false);
+  assert.equal(attempts, 3);
+});
