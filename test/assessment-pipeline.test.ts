@@ -21,7 +21,7 @@ type RecordedRun = {
 class InMemoryRadarArchive implements AssessmentPipelineArchive {
   readonly candidates = new Map<string, Candidate>();
   readonly connectorHealth = new Map<string, { detail: string | null; lastSuccessAt: string | null; status: string; tone: string }>();
-  readonly evidence = new Map<string, SourceEvidence>();
+  readonly evidence = new Map<string, { association: "primary" | "related"; candidateId: string; evidence: SourceEvidence }>();
   readonly runs = new Map<string, RecordedRun>();
 
   async failCollectionRun(input: { errorMessage: string; finishedAt: string; runId: string }) {
@@ -52,12 +52,14 @@ class InMemoryRadarArchive implements AssessmentPipelineArchive {
     run.status = "succeeded";
   }
 
-  async upsertSourceEvidence(evidence: SourceEvidence) {
-    this.evidence.set(`${evidence.canonicalIdentifier}:${evidence.connectorId}:${evidence.sourceUrl}`, evidence);
+  async upsertSourceEvidence(input: { association: "primary" | "related"; candidateId: string; evidence: SourceEvidence }) {
+    const { association, candidateId, evidence } = input;
+    this.evidence.set(`${candidateId}:${evidence.canonicalIdentifier}:${evidence.connectorId}:${evidence.sourceUrl}`, { association, candidateId, evidence });
   }
 
   async upsertCandidate(candidate: Candidate) {
     this.candidates.set(candidate.canonicalIdentifier, candidate);
+    return { id: candidate.canonicalIdentifier };
   }
 }
 
@@ -122,7 +124,7 @@ test("固定 Connector Fixture 在重复采集后保留一条 Source Evidence，
   assert.deepEqual(second, { candidateCount: 1, connectorId: "github-trending", runId: "run-2", status: "succeeded" });
   assert.equal(archive.evidence.size, 1);
   assert.equal(archive.candidates.size, 1);
-  assert.equal([...archive.evidence.values()][0]?.collectedAt, "2026-08-12T03:00:00.000Z");
+  assert.equal([...archive.evidence.values()][0]?.evidence.collectedAt, "2026-08-12T03:00:00.000Z");
   assert.deepEqual(archive.connectorHealth.get("github-trending"), {
     detail: null,
     lastSuccessAt: "2026-08-12T03:00:00.000Z",
@@ -133,6 +135,38 @@ test("固定 Connector Fixture 在重复采集后保留一条 Source Evidence，
     { candidateCount: 1, id: "run-1", status: "succeeded" },
     { candidateCount: 1, id: "run-2", status: "succeeded" },
   ]);
+});
+
+test("Canonical Identifier 不一致的 Source Evidence 保留为关联证据，而不强制合并 Candidate", async () => {
+  const archive = new InMemoryRadarArchive();
+  const result = collectionResult("2026-08-12T08:00:00.000Z");
+  const candidate = result.candidates[0];
+  if (!candidate) throw new Error("Fixture 缺少 Candidate。");
+  const relatedEvidence: SourceEvidence = {
+    ...candidate.evidence[0]!,
+    canonicalIdentifier: "official:openai/codex-release",
+    sourceName: "Official Release",
+    sourceUrl: "https://openai.com/codex-release",
+  };
+  const connector: SourceConnector = {
+    id: "github-trending",
+    collect: async () => ({ ...result, candidates: [{ ...candidate, evidence: [relatedEvidence] }] }),
+  };
+  const pipeline = createAssessmentPipeline({
+    archive,
+    clock: () => new Date("2026-08-12T08:00:01.000Z"),
+    createRunId: () => "related-evidence-run",
+    modelRuntime: fixtureRuntime,
+    sourceConnectors: [connector],
+  });
+
+  await pipeline.runCollectionCycle("github-trending");
+
+  assert.deepEqual([...archive.evidence.values()], [{
+    association: "related",
+    candidateId: "github:openai/codex",
+    evidence: relatedEvidence,
+  }]);
 });
 
 test("Candidate Filter 会阻止不在 Radar Profile 范围内的 Candidate 及其 Source Evidence 进入评估归档", async () => {
@@ -152,7 +186,7 @@ test("Candidate Filter 会阻止不在 Radar Profile 范围内的 Candidate 及�
 
   const result = await pipeline.runCollectionCycle("github-trending");
 
-  assert.deepEqual(result, { candidateCount: 1, connectorId: "github-trending", runId: "filtered-run", status: "succeeded" });
+  assert.deepEqual(result, { candidateCount: 0, connectorId: "github-trending", runId: "filtered-run", status: "succeeded" });
   assert.equal(archive.candidates.size, 0);
   assert.equal(archive.evidence.size, 0);
 });

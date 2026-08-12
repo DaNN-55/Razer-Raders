@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createAssessmentPipeline } from "./lib/radar/assessment-pipeline.ts";
 import { postgresAssessmentPipelineArchive } from "./lib/radar/assessment-pipeline-archive.ts";
+import { createEnvironmentCandidateFilter } from "./lib/radar/candidate-filter.ts";
 import { githubTrendingConnector } from "./lib/radar/connectors/github-trending.ts";
 import { getDatabasePool } from "./lib/radar/database.ts";
 
@@ -13,6 +14,7 @@ function getCollectionIntervalMs() {
 
 const assessmentPipeline = createAssessmentPipeline({
   archive: postgresAssessmentPipelineArchive,
+  candidateFilter: createEnvironmentCandidateFilter(),
   clock: () => new Date(),
   createRunId: randomUUID,
   modelRuntime: { id: process.env.RADAR_MODEL_RUNTIME_ID ?? "not-configured" },

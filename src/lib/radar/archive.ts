@@ -32,6 +32,16 @@ type AssessmentStateRow = QueryResultRow & {
   candidate_count: number;
 };
 
+type EvaluatingCandidateRow = QueryResultRow & {
+  canonical_identifier: string;
+  last_collected_at: Date;
+  priority: string;
+  ranking_score: number;
+  selection_reason: string;
+  signal_state: string;
+  title: string;
+};
+
 export async function getLatestPublishedBrief() {
   const database = getDatabasePool();
   const brief = await database.query<BriefRow>("SELECT id, published_at FROM brief_snapshots WHERE status = 'published' ORDER BY published_at DESC LIMIT 1");
@@ -91,4 +101,27 @@ export async function getAssessmentState() {
   return candidateCount > 0
     ? { candidateCount, status: "evaluating" as const }
     : { candidateCount: 0, status: "unpublished" as const };
+}
+
+export async function getEvaluatingCandidates(limit = 50) {
+  const database = getDatabasePool();
+  const result = await database.query<EvaluatingCandidateRow>(
+    `SELECT canonical_identifier, title, signal_state, priority, ranking_score, selection_reason, last_collected_at
+    FROM radar_candidates
+    WHERE evaluation_status = 'evaluating'
+      AND last_collected_at >= NOW() - INTERVAL '7 days'
+    ORDER BY ranking_score DESC, last_collected_at DESC
+    LIMIT $1`,
+    [limit],
+  );
+
+  return result.rows.map((candidate) => ({
+    canonicalIdentifier: candidate.canonical_identifier,
+    lastCollectedAt: candidate.last_collected_at.toISOString(),
+    priority: candidate.priority,
+    rankingScore: candidate.ranking_score,
+    selectionReason: candidate.selection_reason,
+    signalState: candidate.signal_state,
+    title: candidate.title,
+  }));
 }

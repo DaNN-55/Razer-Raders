@@ -15,8 +15,8 @@ export type AssessmentPipelineArchive = {
   markConnectorFresh: (input: { collectedAt: string; connectorId: ConnectorId }) => Promise<void>;
   startCollectionRun: (input: { connectorId: ConnectorId; runId: string; startedAt: string }) => Promise<void>;
   succeedCollectionRun: (input: { candidateCount: number; finishedAt: string; runId: string }) => Promise<void>;
-  upsertCandidate: (candidate: Candidate) => Promise<void>;
-  upsertSourceEvidence: (evidence: SourceEvidence) => Promise<void>;
+  upsertCandidate: (candidate: Candidate) => Promise<{ id: string }>;
+  upsertSourceEvidence: (input: { association: "primary" | "related"; candidateId: string; evidence: SourceEvidence }) => Promise<void>;
 };
 
 export type AssessmentPipelineDependencies = {
@@ -54,23 +54,27 @@ export function createAssessmentPipeline(dependencies: AssessmentPipelineDepende
           throw new Error(`Source Connector 返回了不匹配的标识：${collection.connectorId}`);
         }
 
-        for (const candidate of collection.candidates) {
-          if (!candidateFilter(candidate)) continue;
+        const retainedCandidates = collection.candidates.filter(candidateFilter);
+        for (const candidate of retainedCandidates) {
+          const storedCandidate = await archive.upsertCandidate(candidate);
 
-          await archive.upsertCandidate(candidate);
           for (const evidence of candidate.evidence) {
-            await archive.upsertSourceEvidence(evidence);
+            await archive.upsertSourceEvidence({
+              association: evidence.canonicalIdentifier === candidate.canonicalIdentifier ? "primary" : "related",
+              candidateId: storedCandidate.id,
+              evidence,
+            });
           }
         }
 
         await archive.succeedCollectionRun({
-          candidateCount: collection.candidates.length,
+          candidateCount: retainedCandidates.length,
           finishedAt: clock().toISOString(),
           runId,
         });
         await archive.markConnectorFresh({ collectedAt: collection.collectedAt, connectorId });
 
-        return { candidateCount: collection.candidates.length, connectorId, runId, status: "succeeded" };
+        return { candidateCount: retainedCandidates.length, connectorId, runId, status: "succeeded" };
       } catch (error) {
         const message = errorMessage(error);
         await archive.failCollectionRun({ errorMessage: message, finishedAt: clock().toISOString(), runId });
