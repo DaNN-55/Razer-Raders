@@ -6,10 +6,10 @@ import { createBriefPublisher } from "./lib/radar/brief-publication.ts";
 import { createEnvironmentCandidateFilter } from "./lib/radar/candidate-filter.ts";
 import { createCitationAccessibilityCheck } from "./lib/radar/citation-accessibility.ts";
 import { recordCollectionCycle } from "./lib/radar/collection-stage-recorder.ts";
-import { createCompatibleRuntimeFromEnvironment } from "./lib/radar/compatible-runtime.ts";
 import { createDailyPublicationSchedule } from "./lib/radar/daily-publication-schedule.ts";
 import { githubTrendingConnector } from "./lib/radar/connectors/github-trending.ts";
 import { getDatabasePool } from "./lib/radar/database.ts";
+import { createModelRuntimeFromEnvironment } from "./lib/radar/model-runtime.ts";
 import { createTaskWorkerSchedule } from "./lib/radar/task-worker-schedule.ts";
 
 const defaultCollectionIntervalMs = 2 * 60 * 60 * 1000;
@@ -44,19 +44,21 @@ async function collectGitHubTrendingIntoArchive() {
 }
 
 async function publishDailyBriefIfConfigured() {
-  const runtime = createCompatibleRuntimeFromEnvironment();
+  const runtime = createModelRuntimeFromEnvironment();
+  const runtimeName = process.env.RADAR_MODEL_RUNTIME ?? "compatible";
   if (!runtime) {
-    console.log("Compatible Runtime 未配置，跳过当日日报发布。");
+    const detail = `${runtimeName} Runtime 未配置或不受支持。`;
+    console.log(`${detail} 跳过当日日报发布。`);
     const dueDay = createDailyPublicationSchedule(() => new Date()).getDuePublicationDay();
     if (dueDay) {
       await postgresBriefPublicationArchive.recordPipelineStage({
-        detail: "Compatible Runtime 未配置。",
+        detail,
         publicationDay: dueDay,
         stage: "assessment",
         status: "failed",
       });
     }
-    return { reason: "Compatible Runtime 未配置。", status: "rejected" as const };
+    return { reason: detail, status: "rejected" as const };
   }
 
   const candidates = await postgresBriefPublicationArchive.getCandidatesForPublication();

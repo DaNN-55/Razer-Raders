@@ -8,6 +8,7 @@ import { postgresAssessmentPipelineArchive } from "../../src/lib/radar/assessmen
 import { createAssessmentPipeline, type SourceConnector } from "../../src/lib/radar/assessment-pipeline.ts";
 import { getDatabasePool } from "../../src/lib/radar/database.ts";
 import type { Candidate } from "../../src/lib/radar/connectors/types.ts";
+import { createOllamaRuntimeFromEnvironment } from "../../src/lib/radar/ollama-runtime.ts";
 
 const candidate: PublicationCandidate = {
   canonicalIdentifier: "github:openai/codex",
@@ -285,6 +286,77 @@ test("无效固定 Runtime 被拒绝后，真实 Archive 不会产生 Snapshot",
   const brief = await response.json();
   assert.equal(brief.availability, "evaluating");
   assert.deepEqual(brief.signals, []);
+});
+
+test("固定 Ollama 传输 Fixture 经相同 Publication Validation 发布 Brief Snapshot", { concurrency: false }, async () => {
+  let requestedUrl = "";
+  let requestedBody = "";
+  const runtime = createOllamaRuntimeFromEnvironment({
+    RADAR_OLLAMA_BASE_URL: "http://ollama.fixture:11434",
+    RADAR_OLLAMA_MODEL: "qwen3:8b",
+  }, async (input, init) => {
+    requestedUrl = String(input);
+    requestedBody = String(init?.body);
+    return Response.json({ done: true, response: JSON.stringify(validAssessment) });
+  });
+  assert.ok(runtime);
+
+  const result = await createBriefPublisher({
+    archive: postgresBriefPublicationArchive,
+    clock: () => new Date("2026-08-12T01:00:00.000Z"),
+    configurationVersion: "profile@v1",
+    createBriefId: () => "brief-e2e-ollama",
+    isCitationAccessible: async () => true,
+    pipelineVersion: "assessment-pipeline@v1",
+    runtime,
+  }).publishDailyBrief();
+
+  assert.deepEqual(result, { briefId: "brief-e2e-ollama", signalCount: 1, status: "published" });
+  assert.equal(requestedUrl, "http://ollama.fixture:11434/api/generate");
+  assert.match(requestedBody, /openai\/codex/);
+  const snapshot = await getDatabasePool().query<{ model_runtime_id: string }>(
+    "SELECT model_runtime_id FROM brief_snapshots WHERE id = $1",
+    ["brief-e2e-ollama"],
+  );
+  assert.deepEqual(snapshot.rows, [{ model_runtime_id: "ollama:qwen3:8b" }]);
+});
+
+test("固定 Ollama 传输失败会按 Assessment Delay 呈现，不会发布 Snapshot", { concurrency: false }, async () => {
+  let attempts = 0;
+  const runtime = createOllamaRuntimeFromEnvironment({
+    RADAR_OLLAMA_BASE_URL: "http://ollama.fixture:11434",
+    RADAR_OLLAMA_MODEL: "qwen3:8b",
+  }, async () => {
+    attempts += 1;
+    return new Response("model unavailable", { status: 503 });
+  });
+  assert.ok(runtime);
+
+  const result = await createBriefPublisher({
+    archive: postgresBriefPublicationArchive,
+    clock: () => new Date("2026-08-12T01:00:00.000Z"),
+    configurationVersion: "profile@v1",
+    createBriefId: () => "brief-e2e-ollama-delayed",
+    isCitationAccessible: async () => true,
+    pipelineVersion: "assessment-pipeline@v1",
+    runtime,
+  }).publishDailyBrief();
+
+  assert.deepEqual(result, {
+    reason: "openai/codex：Ollama Runtime 请求失败：HTTP 503（已重试 3 次）",
+    status: "delayed",
+  });
+  assert.equal(attempts, 3);
+  const response = await fetch(`${baseUrl}/api/brief`);
+  const brief = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(brief.availability, "assessment-delayed");
+  assert.deepEqual(brief.assessmentDelay, {
+    candidateCount: 1,
+    detail: "Ollama Runtime 请求失败：HTTP 503（已重试 3 次）",
+  });
+  const snapshots = await getDatabasePool().query("SELECT id FROM brief_snapshots");
+  assert.equal(snapshots.rowCount, 0);
 });
 
 test("固定失败 Runtime 耗尽重试后，API 明确呈现 Assessment Delay，后续采集可恢复", { concurrency: false }, async () => {
