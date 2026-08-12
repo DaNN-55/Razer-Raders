@@ -1,0 +1,31 @@
+{
+  "name": "razer-raders",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "db:migrate": "node --experimental-strip-types src/db/migrate.ts",
+    "worker": "node --experimental-strip-types src/worker.ts",
+    "worker:once": "RADAR_WORKER_ONCE=true node --experimental-strip-types src/worker.ts"
+  },
+  "dependencies": {
+    "next": "latest",
+    "pg": "8.23.0",
+    "react": "latest",
+    "react-dom": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "@types/pg": "8.21.0",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "latest",
+    "typescript": "^6.0.3"
+  }
+}

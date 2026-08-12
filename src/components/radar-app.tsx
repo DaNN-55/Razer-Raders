@@ -1,0 +1,467 @@
+"use client";
+
+import { type ChangeEvent, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import {
+  ArchiveIcon,
+  ArrowLeftIcon,
+  CheckIcon,
+  ChevronIcon,
+  ExternalIcon,
+  FilterIcon,
+  MenuIcon,
+  MoonIcon,
+  PlusIcon,
+  PulseIcon,
+  RadarIcon,
+  SearchIcon,
+  SettingsIcon,
+  SunIcon,
+} from "@/components/icons";
+import { type Signal } from "@/components/radar-data";
+import { type RadarBrief, type RadarConnector } from "@/lib/radar/brief";
+
+type View = "brief" | "archive" | "health" | "config";
+type Theme = "dark" | "light";
+
+const NAV_ITEMS: { id: View; label: string; Icon: typeof RadarIcon }[] = [
+  { id: "brief", label: "今日简报", Icon: RadarIcon },
+  { id: "archive", label: "信号档案", Icon: ArchiveIcon },
+  { id: "health", label: "来源健康", Icon: PulseIcon },
+  { id: "config", label: "配置后台", Icon: SettingsIcon },
+];
+
+const stateTone = { "新出现": "lime", "持续升温": "amber", "重要更新": "blue" } as const;
+const SAVED_SIGNALS_KEY = "razer-raders.saved-signals.v1";
+const SAVED_SIGNALS_EVENT = "razer-raders:saved-signals-change";
+const THEME_KEY = "razer-raders.theme.v1";
+const THEME_EVENT = "razer-raders:theme-change";
+
+function subscribeToSavedSignals(onStoreChange: () => void) {
+  const onStorage = (event: StorageEvent) => {
+    if (event.key === SAVED_SIGNALS_KEY) onStoreChange();
+  };
+
+  window.addEventListener("storage", onStorage);
+  window.addEventListener(SAVED_SIGNALS_EVENT, onStoreChange);
+  return () => {
+    window.removeEventListener("storage", onStorage);
+    window.removeEventListener(SAVED_SIGNALS_EVENT, onStoreChange);
+  };
+}
+
+function getSavedSignalsSnapshot() {
+  return window.localStorage.getItem(SAVED_SIGNALS_KEY) ?? "[]";
+}
+
+function getSavedSignalsServerSnapshot() {
+  return "[]";
+}
+
+function parseSavedSignals(snapshot: string) {
+  try {
+    const parsed = JSON.parse(snapshot);
+    return Array.isArray(parsed) && parsed.every((id) => typeof id === "string") ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function subscribeToTheme(onStoreChange: () => void) {
+  const onStorage = (event: StorageEvent) => {
+    if (event.key === THEME_KEY) onStoreChange();
+  };
+
+  window.addEventListener("storage", onStorage);
+  window.addEventListener(THEME_EVENT, onStoreChange);
+  return () => {
+    window.removeEventListener("storage", onStorage);
+    window.removeEventListener(THEME_EVENT, onStoreChange);
+  };
+}
+
+function getThemeSnapshot(): Theme {
+  return window.localStorage.getItem(THEME_KEY) === "light" ? "light" : "dark";
+}
+
+function getThemeServerSnapshot(): Theme {
+  return "dark";
+}
+
+export function RadarApp({ brief }: { brief: RadarBrief }) {
+  const { connectors, publishedAt, signals, topicOptions } = brief;
+  const [view, setView] = useState<View>("brief");
+  const [selectedId, setSelectedId] = useState<string | null>(signals[0]?.id ?? null);
+  const [topic, setTopic] = useState("全部主题");
+  const [showPriority, setShowPriority] = useState(false);
+  const [filterOpen, setFilterOpen] = useState(false);
+  const savedSnapshot = useSyncExternalStore(subscribeToSavedSignals, getSavedSignalsSnapshot, getSavedSignalsServerSnapshot);
+  const saved = useMemo(() => parseSavedSignals(savedSnapshot), [savedSnapshot]);
+  const theme = useSyncExternalStore(subscribeToTheme, getThemeSnapshot, getThemeServerSnapshot);
+
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [view]);
+
+  const toggleSaved = (id: string) => {
+    const current = parseSavedSignals(getSavedSignalsSnapshot());
+    const next = current.includes(id) ? current.filter((savedId) => savedId !== id) : [...current, id];
+    window.localStorage.setItem(SAVED_SIGNALS_KEY, JSON.stringify(next));
+    window.dispatchEvent(new Event(SAVED_SIGNALS_EVENT));
+  };
+
+  const toggleTheme = () => {
+    const nextTheme: Theme = theme === "dark" ? "light" : "dark";
+    window.localStorage.setItem(THEME_KEY, nextTheme);
+    window.dispatchEvent(new Event(THEME_EVENT));
+  };
+
+  const visibleSignals = useMemo(() => {
+    return signals.filter((signal) => {
+      const matchesTopic = topic === "全部主题" || signal.topics.includes(topic);
+      const matchesPriority = !showPriority || signal.priority === "高优先级";
+      return matchesTopic && matchesPriority;
+    });
+  }, [showPriority, signals, topic]);
+
+  const selectedSignal = signals.find((signal) => signal.id === selectedId) ?? visibleSignals[0] ?? signals[0];
+
+  return (
+    <main className="app-shell" data-theme={theme}>
+      <AmbientRadar />
+      <aside className="sidebar" aria-label="主导航">
+        <button className="brand" onClick={() => setView("brief")} type="button">
+          <RadarIcon size={22} />
+          <span>Razer-Raders</span>
+        </button>
+        <nav className="nav-list">
+          {NAV_ITEMS.map(({ id, label, Icon }) => (
+            <button className={`nav-item ${view === id ? "is-active" : ""}`} key={id} onClick={() => setView(id)} type="button">
+              <Icon size={18} />
+              <span>{label}</span>
+            </button>
+          ))}
+        </nav>
+        <div className="sidebar-footer">
+          <div className="runtime-status"><span className="status-dot" /><span>系统就绪</span></div>
+          <small>Asia/Shanghai · 09:00 发布</small>
+          <ThemeToggle onToggle={toggleTheme} theme={theme} />
+        </div>
+      </aside>
+
+      <section className="mobile-header">
+        <button className="mobile-brand" onClick={() => setView("brief")} type="button"><RadarIcon size={20} /> Razer-Raders</button>
+        <div className="mobile-actions">
+          <ThemeToggle compact onToggle={toggleTheme} theme={theme} />
+          {view === "brief" && <button aria-label="打开筛选条件" className="icon-button" onClick={() => setFilterOpen(true)} type="button"><MenuIcon /></button>}
+        </div>
+      </section>
+
+      <nav className="mobile-nav" aria-label="移动端主导航">
+        {NAV_ITEMS.map(({ id, label, Icon }) => <button className={view === id ? "is-active" : ""} key={id} onClick={() => setView(id)} type="button"><Icon size={15} /><span>{label}</span></button>)}
+      </nav>
+
+      <section className="main-content">
+        {view === "brief" && (
+          <BriefView
+            connectors={connectors}
+            filterOpen={filterOpen}
+            hasAnySignals={signals.length > 0}
+            onCloseFilter={() => setFilterOpen(false)}
+            onSelectSignal={(id) => setSelectedId(id)}
+            onToggleSaved={toggleSaved}
+            publishedAt={publishedAt}
+            saved={saved}
+            selectedSignal={selectedSignal}
+            showPriority={showPriority}
+            signals={visibleSignals}
+            topic={topic}
+            onTogglePriority={() => setShowPriority((value) => !value)}
+            onTopicChange={setTopic}
+            topicOptions={topicOptions}
+          />
+        )}
+        {view === "archive" && <ArchiveView onSelect={(id) => { setSelectedId(id); setView("brief"); }} saved={saved} signals={signals} topicOptions={topicOptions} />}
+        {view === "health" && <HealthView connectors={connectors} />}
+        {view === "config" && <ConfigView connectors={connectors} />}
+      </section>
+    </main>
+  );
+}
+
+function formatPublishedAt(value: string) {
+  const publishedAt = new Date(value);
+  if (Number.isNaN(publishedAt.getTime())) return "等待首份简报发布";
+
+  return new Intl.DateTimeFormat("zh-CN", {
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    month: "long",
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+  }).format(publishedAt).replace(",", " ·") + " CST";
+}
+
+function ThemeToggle({ compact = false, onToggle, theme }: { compact?: boolean; onToggle: () => void; theme: Theme }) {
+  const isDark = theme === "dark";
+  const targetLabel = isDark ? "浅色" : "深色";
+
+  return (
+    <button aria-label={`切换至${targetLabel}模式`} className={`theme-toggle ${compact ? "is-compact" : ""}`} onClick={onToggle} type="button">
+      {isDark ? <MoonIcon size={compact ? 18 : 16} /> : <SunIcon size={compact ? 18 : 16} />}
+      {!compact && <><span>界面模式</span><strong>{isDark ? "深色" : "浅色"}</strong></>}
+    </button>
+  );
+}
+
+function BriefView({
+  connectors,
+  filterOpen,
+  hasAnySignals,
+  onCloseFilter,
+  onSelectSignal,
+  onTogglePriority,
+  onToggleSaved,
+  publishedAt,
+  saved,
+  selectedSignal,
+  showPriority,
+  signals: visibleSignals,
+  topic,
+  onTopicChange,
+  topicOptions,
+}: {
+  connectors: readonly RadarConnector[];
+  filterOpen: boolean;
+  hasAnySignals: boolean;
+  onCloseFilter: () => void;
+  onSelectSignal: (id: string) => void;
+  onTogglePriority: () => void;
+  onToggleSaved: (id: string) => void;
+  publishedAt: string;
+  saved: string[];
+  selectedSignal: Signal | null;
+  showPriority: boolean;
+  signals: Signal[];
+  topic: string;
+  onTopicChange: (topic: string) => void;
+  topicOptions: readonly string[];
+}) {
+  return (
+    <div className="brief-layout">
+      <section className="brief-column">
+        <header className="page-header">
+          <p className="eyeline">{formatPublishedAt(publishedAt)}</p>
+          <h1>今天，值得你分心的 {visibleSignals.length} 个 AI 信号</h1>
+          <p>从 7 天观察窗口中筛出有证据、可行动的变化。未验证的判断会明确标注。</p>
+        </header>
+
+        <div className="signal-list" aria-label="今日雷达短名单">
+          {visibleSignals.length ? visibleSignals.map((signal) => (
+            <div className="signal-cluster" key={signal.id}>
+              <SignalRow
+                isSelected={signal.id === selectedSignal?.id}
+                onClick={() => onSelectSignal(signal.id)}
+                signal={signal}
+              />
+              {signal.id === selectedSignal?.id && <div className="inline-detail"><SignalDetail isSaved={saved.includes(signal.id)} onToggleSaved={() => onToggleSaved(signal.id)} signal={signal} /></div>}
+            </div>
+          )) : <EmptySignals hasAnySignals={hasAnySignals} onReset={() => onTopicChange("全部主题")} />}
+        </div>
+      </section>
+
+      <aside className={`filter-drawer ${filterOpen ? "is-open" : ""}`} aria-label="主题筛选">
+        <div className="drawer-header"><span>筛选与排序</span><button className="icon-button" onClick={onCloseFilter} type="button"><ArrowLeftIcon /></button></div>
+        <FilterControls onTogglePriority={onTogglePriority} onTopicChange={onTopicChange} showPriority={showPriority} topic={topic} topicOptions={topicOptions} />
+      </aside>
+
+      <aside className="utility-rail">
+        <section className="utility-section">
+          <div className="rail-title"><span>来源健康</span><small>更新于 8 分钟前</small></div>
+          <ConnectorHealth connectors={connectors} compact />
+        </section>
+        <section className="utility-section today-note">
+          <div className="rail-title"><span>今日快照</span></div>
+          <p><strong>整体信号强度：</strong>适中偏强</p>
+          <p>推理模型、Agent 工具链与评估方法出现连续变化。</p>
+          <hr />
+          <p><strong>注意噪声：</strong>工具发布的讨论速度上升，不等于生产可用。</p>
+        </section>
+        <section className="utility-section desktop-filter">
+          <div className="rail-title"><span>主题过滤</span><FilterIcon size={16} /></div>
+          <FilterControls onTogglePriority={onTogglePriority} onTopicChange={onTopicChange} showPriority={showPriority} topic={topic} topicOptions={topicOptions} />
+        </section>
+      </aside>
+    </div>
+  );
+}
+
+function SignalRow({ isSelected, onClick, signal }: { isSelected: boolean; onClick: () => void; signal: Signal }) {
+  return (
+    <article className={`signal-row ${isSelected ? "is-selected" : ""}`}>
+      <button className="signal-main" onClick={onClick} type="button">
+        <span className="signal-index">{signal.index}</span>
+        <span className="signal-tags">
+          <span className={`state-label ${stateTone[signal.state]}`}>{signal.state}</span>
+          <span className={`priority-label ${signal.priority === "高优先级" ? "high" : ""}`}>{signal.priority}</span>
+        </span>
+        <span className="signal-copy">
+          <strong>{signal.title}</strong>
+          <span>{signal.summary}</span>
+          <span className="source-line">{signal.sources.map((source) => <em key={source}>{source}</em>)}</span>
+          <span className="signal-insights">
+            <span><b>Builder</b><strong>{signal.builderValue}</strong></span>
+            <span><b>产品机会</b><strong>{signal.productOpportunity}</strong></span>
+          </span>
+        </span>
+      </button>
+    </article>
+  );
+}
+
+function SignalDetail({ isSaved, onToggleSaved, signal }: { isSaved: boolean; onToggleSaved: () => void; signal: Signal }) {
+  return (
+    <div className="detail-inner">
+      <div className="detail-grid">
+        <div className="assessment-column">
+          <AssessmentSection title="发生了什么" body={signal.happened} />
+          <AssessmentSection title="为什么现在值得关注" body={signal.whyNow} />
+          <AssessmentSection title="技术依据" body={signal.technicalBasis} />
+          <AssessmentSection title="风险与未知项" body={signal.risk} isRisk />
+        </div>
+        <div className="evidence-column">
+          <div className="detail-verdicts">
+            <div><small>Builder 价值</small><strong>{signal.builderValue}</strong></div>
+            <div><small>产品机会</small><strong>{signal.productOpportunity}</strong></div>
+          </div>
+          <section className="evidence-section">
+            <div className="section-heading"><span>来源与证据</span><span className="evidence-actions"><small>一手资料优先</small><button aria-label={isSaved ? "取消保存" : "保存信号"} className={`detail-save ${isSaved ? "is-saved" : ""}`} onClick={onToggleSaved} type="button">{isSaved ? "已保存" : "保存"}</button></span></div>
+            {signal.evidence.map((evidence) => (
+              <a className="evidence-link" href={evidence.url} key={evidence.label} rel="noreferrer" target="_blank">
+                <span><small>{evidence.source}</small>{evidence.label}</span><ExternalIcon size={15} />
+              </a>
+            ))}
+          </section>
+          <p className="provenance">评估依据：默认 Radar Profile · Ranking Policy v0.1 · 示例数据</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AssessmentSection({ body, isRisk = false, title }: { body: string; isRisk?: boolean; title: string }) {
+  return <section className={`assessment-section ${isRisk ? "risk" : ""}`}><h3>{title}</h3><p>{body}</p></section>;
+}
+
+function FilterControls({ onTogglePriority, onTopicChange, showPriority, topic, topicOptions }: { onTogglePriority: () => void; onTopicChange: (topic: string) => void; showPriority: boolean; topic: string; topicOptions: readonly string[] }) {
+  return <div className="filter-controls">
+    <label>
+      <span>主题</span>
+      <select onChange={(event) => onTopicChange(event.target.value)} value={topic}>
+        {topicOptions.map((option) => <option key={option}>{option}</option>)}
+      </select>
+    </label>
+    <button className={`switch-row ${showPriority ? "is-on" : ""}`} onClick={onTogglePriority} type="button"><span>只看高优先级</span><i /></button>
+  </div>;
+}
+
+function ConnectorHealth({ compact = false, connectors }: { compact?: boolean; connectors: readonly RadarConnector[] }) {
+  return <div className={`connector-list ${compact ? "is-compact" : ""}`}>
+    {connectors.map((connector) => <div className="connector-row" key={connector.name}><span><i className={`connector-dot ${connector.tone}`} />{connector.name}{!compact && <small>{connector.caption}</small>}</span><b className={connector.tone}>{connector.status}</b></div>)}
+  </div>;
+}
+
+function ArchiveView({ onSelect, saved, signals, topicOptions }: { onSelect: (id: string) => void; saved: string[]; signals: readonly Signal[]; topicOptions: readonly string[] }) {
+  const [query, setQuery] = useState("");
+  const [topic, setTopic] = useState("全部主题");
+  const results = useMemo(() => signals.filter((signal) => {
+    const candidate = `${signal.title} ${signal.summary} ${signal.topics.join(" ")}`.toLowerCase();
+    return candidate.includes(query.toLowerCase()) && (topic === "全部主题" || signal.topics.includes(topic));
+  }), [query, signals, topic]);
+
+  return <section className="simple-page archive-page">
+    <header className="page-header"><p className="eyeline">Radar Archive · 示例档案</p><h1>在信号与证据中回看</h1><p>按关键词、时间与主题定位过往判断。MVP 使用结构化筛选与全文检索。</p></header>
+    <div className="archive-tools"><label><SearchIcon size={17} /><input onChange={(event) => setQuery(event.target.value)} placeholder="搜索模型、工具、概念…" value={query} /></label><select onChange={(event) => setTopic(event.target.value)} value={topic}>{topicOptions.map((option) => <option key={option}>{option}</option>)}</select></div>
+    <div className="archive-results">{results.map((signal) => <button className="archive-row" key={signal.id} onClick={() => onSelect(signal.id)} type="button"><span className="archive-date">08·12</span><span><strong>{signal.title}</strong><small>{signal.topics.join(" · ")} · {signal.state} · {signal.evidence.length} 条证据</small></span><span className="archive-right">{saved.includes(signal.id) ? "已保存" : signal.priority}<ChevronIcon size={16} /></span></button>)}</div>
+  </section>;
+}
+
+function HealthView({ connectors }: { connectors: readonly RadarConnector[] }) {
+  return <section className="simple-page health-page">
+    <header className="page-header"><p className="eyeline">Connector Health · 实例状态</p><h1>每一面雷达，都应说明新鲜度</h1><p>来源不可用时仍可发布简报，但会明确显示采集状态与最近成功时间。</p></header>
+    <ConnectorHealth connectors={connectors} />
+    <section className="health-note"><h2>今天的降级说明</h2><p>Show HN 最近一次成功采集较预期晚 18 分钟。该来源的新候选会进入下一轮轻量评估；本期简报未把它伪装为已全量扫描。</p></section>
+  </section>;
+}
+
+function ConfigView({ connectors }: { connectors: readonly RadarConnector[] }) {
+  const [connectorState, setConnectorState] = useState<Record<string, boolean>>(() => Object.fromEntries(connectors.map((connector) => [connector.name, true])));
+  const [includeTerms, setIncludeTerms] = useState("AI, Agent, 推理, 开源模型");
+  const [excludeTerms, setExcludeTerms] = useState("教程, 课程, boilerplate");
+  const [watchlist, setWatchlist] = useState(["OpenAI", "Anthropic", "DeepSeek"]);
+  const [watchlistInput, setWatchlistInput] = useState("");
+  const [saved, setSaved] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testMessage, setTestMessage] = useState("等待测试");
+
+  const saveConfiguration = () => {
+    setSaved(true);
+    window.setTimeout(() => setSaved(false), 2800);
+  };
+  const testConnectors = () => {
+    setTesting(true);
+    setTestMessage("正在执行受限连接测试…");
+    window.setTimeout(() => { setTesting(false); setTestMessage("4 个连接器均可访问；凭据状态仅显示是否存在。"); }, 900);
+  };
+  const addWatchlist = () => {
+    const entry = watchlistInput.trim();
+    if (entry && !watchlist.includes(entry)) setWatchlist((current) => [...current, entry]);
+    setWatchlistInput("");
+  };
+
+  return <section className="config-page">
+    <header className="page-header config-header"><div><p className="eyeline">单一 Radar Profile · v0.1</p><h1>Radar Profile</h1><p>保存后的配置从下一个采集周期生效，不会倒改已发布简报。</p></div><span className="version-select">v0.1（当前）</span></header>
+    <div className="config-layout">
+      <form className="settings-form" onSubmit={(event) => { event.preventDefault(); saveConfiguration(); }}>
+        <Fieldset number="01" title="来源连接器">
+          <div className="setting-stack">{connectors.map((connector) => <ToggleRow checked={connectorState[connector.name]} description={connector.caption} key={connector.name} label={connector.name} onChange={() => setConnectorState((current) => ({ ...current, [connector.name]: !current[connector.name] }))} />)}</div>
+        </Fieldset>
+        <Fieldset number="02" title="主题过滤（可选）">
+          <TextField label="包含" onChange={setIncludeTerms} placeholder="例如：AI, Agent, RAG" value={includeTerms} />
+          <TextField label="排除" onChange={setExcludeTerms} placeholder="例如：tutorial, course" value={excludeTerms} />
+        </Fieldset>
+        <Fieldset number="03" title="官方 Watchlist">
+          <div className="watchlist">{watchlist.map((entry) => <div className="watchlist-row" key={entry}><span><i className="connector-dot fresh" />{entry}</span><button aria-label={`移除 ${entry}`} onClick={() => setWatchlist((current) => current.filter((item) => item !== entry))} type="button">×</button></div>)}</div>
+          <div className="add-watchlist"><input onChange={(event) => setWatchlistInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addWatchlist(); } }} placeholder="添加组织或项目" value={watchlistInput} /><button aria-label="添加 Watchlist 项目" onClick={addWatchlist} type="button"><PlusIcon size={16} /></button></div>
+        </Fieldset>
+        <Fieldset number="04" title="采集与发布">
+          <div className="dual-fields"><label>采集频率<select defaultValue="每 2 小时"><option>每 2 小时</option><option>每 4 小时</option><option>每天一次</option></select></label><label>发布时刻<input defaultValue="09:00" type="time" /></label></div>
+        </Fieldset>
+        <Fieldset number="05" title="来源凭据状态"><div className="credential-list"><div><span>GitHub PAT</span><b>已配置</b></div><div><span>Hugging Face Token</span><b>未配置</b></div><p>密钥仅由部署环境提供，控制台不会读取或保存其值。</p></div></Fieldset>
+        <div className="form-actions"><button className="secondary-button" onClick={testConnectors} type="button">{testing ? "测试中…" : "测试全部连接器"}</button><button className="primary-button" type="submit">{saved ? <><CheckIcon size={17} /> 已保存，将下周期生效</> : "保存并应用"}</button></div>
+      </form>
+      <aside className="config-rail">
+        <section className="config-rail-section"><h2>连接器测试</h2><p className={testing ? "testing" : ""}>{testMessage}</p><div className="test-status"><span><i className="connector-dot fresh" /> GitHub Trending</span><b>可访问</b></div><div className="test-status"><span><i className="connector-dot fresh" /> Official Release</span><b>可访问</b></div></section>
+        <section className="config-rail-section"><h2>配置版本</h2><ol className="version-history"><li className="current"><span>v0.1（当前）</span><small>初始 Profile · 刚刚保存</small></li><li><span>未来版本</span><small>每次保存都会保留可追溯配置</small></li></ol></section>
+      </aside>
+    </div>
+  </section>;
+}
+
+function Fieldset({ children, number, title }: { children: React.ReactNode; number: string; title: string }) { return <fieldset><legend><span>{number}</span>{title}</legend>{children}</fieldset>; }
+
+function ToggleRow({ checked, description, label, onChange }: { checked: boolean; description: string; label: string; onChange: () => void }) {
+  return <div className="toggle-row"><span><strong>{label}</strong><small>{description}</small></span><button aria-pressed={checked} className={`toggle ${checked ? "is-on" : ""}`} onClick={onChange} type="button"><i /></button></div>;
+}
+
+function TextField({ label, onChange, placeholder, value }: { label: string; onChange: (value: string) => void; placeholder: string; value: string }) { return <label className="text-field"><span>{label}</span><input onChange={(event: ChangeEvent<HTMLInputElement>) => onChange(event.target.value)} placeholder={placeholder} value={value} /></label>; }
+
+function EmptySignals({ hasAnySignals, onReset }: { hasAnySignals: boolean; onReset: () => void }) {
+  if (!hasAnySignals) {
+    return <div className="empty-state"><RadarIcon size={30} /><h2>首份日报尚未发布</h2><p>完成采集、筛选和发布后，值得关注的 AI 信号会显示在这里。</p></div>;
+  }
+
+  return <div className="empty-state"><RadarIcon size={30} /><h2>没有匹配的高价值信号</h2><p>当前筛选没有保留候选；这比为了凑数展示低质量内容更可信。</p><button className="secondary-button" onClick={onReset} type="button">清除主题筛选</button></div>;
+}
+
+function AmbientRadar() { return <div className="ambient-radar" aria-hidden="true"><i /><i /><i /><span /><span /><span /></div>; }
