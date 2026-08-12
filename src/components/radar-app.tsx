@@ -1,16 +1,14 @@
 "use client";
 
-import { type ChangeEvent, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import {
   ArchiveIcon,
   ArrowLeftIcon,
-  CheckIcon,
   ChevronIcon,
   ExternalIcon,
   FilterIcon,
   MenuIcon,
   MoonIcon,
-  PlusIcon,
   PulseIcon,
   RadarIcon,
   SearchIcon,
@@ -387,74 +385,35 @@ function ArchiveView({ onSelect, saved, signals, topicOptions }: { onSelect: (id
 }
 
 function HealthView({ connectors }: { connectors: readonly RadarConnector[] }) {
+  const unavailable = connectors.filter((connector) => connector.status !== "新鲜");
+
   return <section className="simple-page health-page">
     <header className="page-header"><p className="eyeline">Connector Health · 实例状态</p><h1>每一面雷达，都应说明新鲜度</h1><p>来源不可用时仍可发布简报，但会明确显示采集状态与最近成功时间。</p></header>
     <ConnectorHealth connectors={connectors} />
-    <section className="health-note"><h2>今天的降级说明</h2><p>Show HN 最近一次成功采集较预期晚 18 分钟。该来源的新候选会进入下一轮轻量评估；本期简报未把它伪装为已全量扫描。</p></section>
+    <section className="health-note"><h2>当前状态说明</h2><p>{unavailable.length ? `尚未就绪的来源：${unavailable.map(({ name, status }) => `${name}（${status}）`).join("、")}。这些来源不会被当作已完整扫描。` : "所有已配置来源均已完成最近一次采集。"}</p></section>
   </section>;
 }
 
 function ConfigView({ connectors }: { connectors: readonly RadarConnector[] }) {
-  const [connectorState, setConnectorState] = useState<Record<string, boolean>>(() => Object.fromEntries(connectors.map((connector) => [connector.name, true])));
-  const [includeTerms, setIncludeTerms] = useState("AI, Agent, 推理, 开源模型");
-  const [excludeTerms, setExcludeTerms] = useState("教程, 课程, boilerplate");
-  const [watchlist, setWatchlist] = useState(["OpenAI", "Anthropic", "DeepSeek"]);
-  const [watchlistInput, setWatchlistInput] = useState("");
-  const [saved, setSaved] = useState(false);
-  const [testing, setTesting] = useState(false);
-  const [testMessage, setTestMessage] = useState("等待测试");
-
-  const saveConfiguration = () => {
-    setSaved(true);
-    window.setTimeout(() => setSaved(false), 2800);
-  };
-  const testConnectors = () => {
-    setTesting(true);
-    setTestMessage("正在执行受限连接测试…");
-    window.setTimeout(() => { setTesting(false); setTestMessage("4 个连接器均可访问；凭据状态仅显示是否存在。"); }, 900);
-  };
-  const addWatchlist = () => {
-    const entry = watchlistInput.trim();
-    if (entry && !watchlist.includes(entry)) setWatchlist((current) => [...current, entry]);
-    setWatchlistInput("");
-  };
-
   return <section className="config-page">
-    <header className="page-header config-header"><div><p className="eyeline">单一 Radar Profile · v0.1</p><h1>Radar Profile</h1><p>保存后的配置从下一个采集周期生效，不会倒改已发布简报。</p></div><span className="version-select">v0.1（当前）</span></header>
+    <header className="page-header config-header"><div><p className="eyeline">单一 Radar Profile</p><h1>Radar Profile</h1><p>配置持久化和受限连接测试将在后续管线中接入；当前页面只展示真实的 Connector Health。</p></div><span className="version-select">建设中</span></header>
     <div className="config-layout">
-      <form className="settings-form" onSubmit={(event) => { event.preventDefault(); saveConfiguration(); }}>
+      <div className="settings-form">
         <Fieldset number="01" title="来源连接器">
-          <div className="setting-stack">{connectors.map((connector) => <ToggleRow checked={connectorState[connector.name]} description={connector.caption} key={connector.name} label={connector.name} onChange={() => setConnectorState((current) => ({ ...current, [connector.name]: !current[connector.name] }))} />)}</div>
+          <ConnectorHealth connectors={connectors} />
         </Fieldset>
-        <Fieldset number="02" title="主题过滤（可选）">
-          <TextField label="包含" onChange={setIncludeTerms} placeholder="例如：AI, Agent, RAG" value={includeTerms} />
-          <TextField label="排除" onChange={setExcludeTerms} placeholder="例如：tutorial, course" value={excludeTerms} />
-        </Fieldset>
-        <Fieldset number="03" title="官方 Watchlist">
-          <div className="watchlist">{watchlist.map((entry) => <div className="watchlist-row" key={entry}><span><i className="connector-dot fresh" />{entry}</span><button aria-label={`移除 ${entry}`} onClick={() => setWatchlist((current) => current.filter((item) => item !== entry))} type="button">×</button></div>)}</div>
-          <div className="add-watchlist"><input onChange={(event) => setWatchlistInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addWatchlist(); } }} placeholder="添加组织或项目" value={watchlistInput} /><button aria-label="添加 Watchlist 项目" onClick={addWatchlist} type="button"><PlusIcon size={16} /></button></div>
-        </Fieldset>
-        <Fieldset number="04" title="采集与发布">
-          <div className="dual-fields"><label>采集频率<select defaultValue="每 2 小时"><option>每 2 小时</option><option>每 4 小时</option><option>每天一次</option></select></label><label>发布时刻<input defaultValue="09:00" type="time" /></label></div>
-        </Fieldset>
-        <Fieldset number="05" title="来源凭据状态"><div className="credential-list"><div><span>GitHub PAT</span><b>已配置</b></div><div><span>Hugging Face Token</span><b>未配置</b></div><p>密钥仅由部署环境提供，控制台不会读取或保存其值。</p></div></Fieldset>
-        <div className="form-actions"><button className="secondary-button" onClick={testConnectors} type="button">{testing ? "测试中…" : "测试全部连接器"}</button><button className="primary-button" type="submit">{saved ? <><CheckIcon size={17} /> 已保存，将下周期生效</> : "保存并应用"}</button></div>
-      </form>
+        <Fieldset number="02" title="计划中的 Profile 配置"><p className="config-note">主题过滤、官方 Watchlist、采集频率与发布时刻将在持久化 Profile Configuration 接入后开放编辑。</p></Fieldset>
+        <Fieldset number="03" title="来源凭据"><p className="config-note">密钥只由部署环境提供；当前客户端不会读取、展示或保存任何凭据。</p></Fieldset>
+      </div>
       <aside className="config-rail">
-        <section className="config-rail-section"><h2>连接器测试</h2><p className={testing ? "testing" : ""}>{testMessage}</p><div className="test-status"><span><i className="connector-dot fresh" /> GitHub Trending</span><b>可访问</b></div><div className="test-status"><span><i className="connector-dot fresh" /> Official Release</span><b>可访问</b></div></section>
-        <section className="config-rail-section"><h2>配置版本</h2><ol className="version-history"><li className="current"><span>v0.1（当前）</span><small>初始 Profile · 刚刚保存</small></li><li><span>未来版本</span><small>每次保存都会保留可追溯配置</small></li></ol></section>
+        <section className="config-rail-section"><h2>连接器测试</h2><p>尚未接入。连接测试会由 Task Worker 执行并写入 Connector Health，而不会在浏览器中模拟结果。</p></section>
+        <section className="config-rail-section"><h2>配置版本</h2><p>尚未持久化。未来版本会在下一个采集周期生效，并保留历史版本。</p></section>
       </aside>
     </div>
   </section>;
 }
 
 function Fieldset({ children, number, title }: { children: React.ReactNode; number: string; title: string }) { return <fieldset><legend><span>{number}</span>{title}</legend>{children}</fieldset>; }
-
-function ToggleRow({ checked, description, label, onChange }: { checked: boolean; description: string; label: string; onChange: () => void }) {
-  return <div className="toggle-row"><span><strong>{label}</strong><small>{description}</small></span><button aria-pressed={checked} className={`toggle ${checked ? "is-on" : ""}`} onClick={onChange} type="button"><i /></button></div>;
-}
-
-function TextField({ label, onChange, placeholder, value }: { label: string; onChange: (value: string) => void; placeholder: string; value: string }) { return <label className="text-field"><span>{label}</span><input onChange={(event: ChangeEvent<HTMLInputElement>) => onChange(event.target.value)} placeholder={placeholder} value={value} /></label>; }
 
 function EmptySignals({ hasAnySignals, onReset }: { hasAnySignals: boolean; onReset: () => void }) {
   if (!hasAnySignals) {

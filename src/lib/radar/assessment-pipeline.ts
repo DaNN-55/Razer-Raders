@@ -18,7 +18,7 @@ export type AssessmentPipelineArchive = {
   upsertSourceEvidence: (evidence: SourceEvidence) => Promise<void>;
 };
 
-type AssessmentPipelineDependencies = {
+export type AssessmentPipelineDependencies = {
   archive: AssessmentPipelineArchive;
   clock: () => Date;
   createRunId: () => string;
