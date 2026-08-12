@@ -1,5 +1,6 @@
 {
   "name": "razer-raders",
+  "packageManager": "pnpm@11.21.0",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -9,6 +10,7 @@
     "start": "next start",
     "lint": "eslint .",
     "test": "node --experimental-strip-types --test test/*.test.ts",
+    "test:e2e": "./scripts/test-e2e-brief-publication.sh",
     "db:migrate": "node --experimental-strip-types src/db/migrate.ts",
     "worker": "node --experimental-strip-types src/worker.ts",
     "worker:once": "RADAR_WORKER_ONCE=true node --experimental-strip-types src/worker.ts"

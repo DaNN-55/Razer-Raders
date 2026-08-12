@@ -11,7 +11,7 @@ services:
       timeout: 3s
       retries: 20
     ports:
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - radar-postgres-data:/var/lib/postgresql/data
 
@@ -47,6 +47,10 @@ services:
     environment:
       DATABASE_URL: postgresql://razer_raders:${POSTGRES_PASSWORD:-local-development-only}@postgres:5432/razer_raders
       RADAR_COLLECTION_INTERVAL_MS: 7200000
+      RADAR_COMPATIBLE_RUNTIME_API_KEY: ${RADAR_COMPATIBLE_RUNTIME_API_KEY:-}
+      RADAR_COMPATIBLE_RUNTIME_BASE_URL: ${RADAR_COMPATIBLE_RUNTIME_BASE_URL:-}
+      RADAR_COMPATIBLE_RUNTIME_MODEL: ${RADAR_COMPATIBLE_RUNTIME_MODEL:-}
+      RADAR_PUBLISH_FIRST_BRIEF: ${RADAR_PUBLISH_FIRST_BRIEF:-false}
 
 volumes:
   radar-postgres-data:

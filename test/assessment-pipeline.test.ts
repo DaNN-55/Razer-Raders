@@ -71,6 +71,7 @@ function collectionResult(collectedAt: string): CollectionResult {
     collectedAt,
     connectorId: "github-trending",
     sourceName: "GitHub Trending",
+    sourceTitle: "openai/codex",
     sourceUrl: "https://github.com/openai/codex",
     trust: "untrusted",
   };
@@ -147,6 +148,7 @@ test("Canonical Identifier 不一致的 Source Evidence 保留为关联证据，
     ...candidate.evidence[0]!,
     canonicalIdentifier: "official:openai/codex-release",
     sourceName: "Official Release",
+    sourceTitle: "Codex release notes",
     sourceUrl: "https://openai.com/codex-release",
   };
   const connector: SourceConnector = {

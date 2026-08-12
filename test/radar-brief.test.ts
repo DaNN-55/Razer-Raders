@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { signals } from "../src/components/radar-data.ts";
 import { getAssessmentBanner, getBriefHeading } from "../src/components/brief-presentation.ts";
-import { createArchiveRadarBrief } from "../src/lib/radar/brief-contract.ts";
+import { createArchiveRadarBrief, createUnpublishedRadarBrief } from "../src/lib/radar/brief-contract.ts";
 import { createBriefGetHandler } from "../src/lib/radar/brief-route.ts";
 
 test("已发布 Daily Brief 与新 Candidate 评估队列并存时，不会把未发布内容混入公开信号", () => {
@@ -37,4 +37,18 @@ test("Brief API 输出 evaluating 状态但只携带已发布 Snapshot", async (
 
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), payload);
+});
+
+test("未配置数据库时，公开 Brief 不再回退到 Fixture", async () => {
+  const brief = createUnpublishedRadarBrief(["全部主题"]);
+
+  assert.deepEqual(brief, {
+    availability: "unpublished",
+    connectors: [],
+    mode: "archive",
+    pendingCandidateCount: 0,
+    publishedAt: "",
+    signals: [],
+    topicOptions: ["全部主题"],
+  });
 });

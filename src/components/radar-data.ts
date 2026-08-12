@@ -22,6 +22,7 @@ export type Signal = {
   whyNow: string;
   technicalBasis: string;
   risk: string;
+  sectionCitations?: Partial<Record<"happened" | "technicalBasis" | "whyNow", string[]>>;
   evidence: Evidence[];
 };
 

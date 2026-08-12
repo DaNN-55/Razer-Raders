@@ -27,6 +27,18 @@ export type PublishedBrief = {
   signals: readonly Signal[];
 };
 
+export function createUnpublishedRadarBrief(topicOptions: readonly string[]): RadarBrief {
+  return {
+    availability: "unpublished",
+    connectors: [],
+    mode: "archive",
+    pendingCandidateCount: 0,
+    publishedAt: "",
+    signals: [],
+    topicOptions,
+  };
+}
+
 export function createArchiveRadarBrief(input: {
   assessment: AssessmentState;
   brief: PublishedBrief | null;

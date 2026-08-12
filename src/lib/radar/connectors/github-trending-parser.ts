@@ -22,6 +22,7 @@ export function parseGitHubTrendingPage(html: string, collectedAt: string): read
         collectedAt,
         connectorId: CONNECTOR_ID,
         sourceName: "GitHub Trending",
+        sourceTitle: repository,
         sourceUrl: url,
         trust: "untrusted",
       }],

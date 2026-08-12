@@ -87,7 +87,7 @@ function getThemeServerSnapshot(): Theme {
 }
 
 export function RadarApp({ brief }: { brief: RadarBrief }) {
-  const { availability, connectors, pendingCandidateCount, publishedAt, signals, topicOptions } = brief;
+  const { availability, connectors, mode, pendingCandidateCount, publishedAt, signals, topicOptions } = brief;
   const [view, setView] = useState<View>("brief");
   const [selectedId, setSelectedId] = useState<string | null>(signals[0]?.id ?? null);
   const [topic, setTopic] = useState("全部主题");
@@ -166,6 +166,7 @@ export function RadarApp({ brief }: { brief: RadarBrief }) {
             availability={availability}
             filterOpen={filterOpen}
             hasAnySignals={signals.length > 0}
+            mode={mode}
             onCloseFilter={() => setFilterOpen(false)}
             onSelectSignal={(id) => setSelectedId(id)}
             onToggleSaved={toggleSaved}
@@ -220,6 +221,7 @@ function BriefView({
   connectors,
   filterOpen,
   hasAnySignals,
+  mode,
   onCloseFilter,
   onSelectSignal,
   onTogglePriority,
@@ -238,6 +240,7 @@ function BriefView({
   connectors: readonly RadarConnector[];
   filterOpen: boolean;
   hasAnySignals: boolean;
+  mode: RadarBrief["mode"];
   onCloseFilter: () => void;
   onSelectSignal: (id: string) => void;
   onTogglePriority: () => void;
@@ -273,7 +276,7 @@ function BriefView({
                 onClick={() => onSelectSignal(signal.id)}
                 signal={signal}
               />
-              {signal.id === selectedSignal?.id && <div className="inline-detail"><SignalDetail isSaved={saved.includes(signal.id)} onToggleSaved={() => onToggleSaved(signal.id)} signal={signal} /></div>}
+              {signal.id === selectedSignal?.id && <div className="inline-detail"><SignalDetail isSaved={saved.includes(signal.id)} mode={mode} onToggleSaved={() => onToggleSaved(signal.id)} signal={signal} /></div>}
             </div>
           )) : <EmptySignals availability={availability} hasAnySignals={hasAnySignals} onReset={() => onTopicChange("全部主题")} pendingCandidateCount={pendingCandidateCount} />}
         </div>
@@ -328,14 +331,14 @@ function SignalRow({ isSelected, onClick, signal }: { isSelected: boolean; onCli
   );
 }
 
-function SignalDetail({ isSaved, onToggleSaved, signal }: { isSaved: boolean; onToggleSaved: () => void; signal: Signal }) {
+function SignalDetail({ isSaved, mode, onToggleSaved, signal }: { isSaved: boolean; mode: RadarBrief["mode"]; onToggleSaved: () => void; signal: Signal }) {
   return (
     <div className="detail-inner">
       <div className="detail-grid">
         <div className="assessment-column">
-          <AssessmentSection title="发生了什么" body={signal.happened} />
-          <AssessmentSection title="为什么现在值得关注" body={signal.whyNow} />
-          <AssessmentSection title="技术依据" body={signal.technicalBasis} />
+          <AssessmentSection title="发生了什么" body={signal.happened} citations={signal.sectionCitations?.happened} />
+          <AssessmentSection title="为什么现在值得关注" body={signal.whyNow} citations={signal.sectionCitations?.whyNow} />
+          <AssessmentSection title="技术依据" body={signal.technicalBasis} citations={signal.sectionCitations?.technicalBasis} />
           <AssessmentSection title="风险与未知项" body={signal.risk} isRisk />
         </div>
         <div className="evidence-column">
@@ -351,15 +354,15 @@ function SignalDetail({ isSaved, onToggleSaved, signal }: { isSaved: boolean; on
               </a>
             ))}
           </section>
-          <p className="provenance">评估依据：默认 Radar Profile · Ranking Policy v0.1 · 示例数据</p>
+          <p className="provenance">评估依据：默认 Radar Profile · Ranking Policy v0.1 · {mode === "archive" ? "已发布 Brief Snapshot" : "示例数据"}</p>
         </div>
       </div>
     </div>
   );
 }
 
-function AssessmentSection({ body, isRisk = false, title }: { body: string; isRisk?: boolean; title: string }) {
-  return <section className={`assessment-section ${isRisk ? "risk" : ""}`}><h3>{title}</h3><p>{body}</p></section>;
+function AssessmentSection({ body, citations = [], isRisk = false, title }: { body: string; citations?: readonly string[]; isRisk?: boolean; title: string }) {
+  return <section className={`assessment-section ${isRisk ? "risk" : ""}`}><h3>{title}</h3><p>{body}</p>{citations.length > 0 ? <span className="section-citations">证据 {citations.map((citation) => <a href={citation} key={citation} rel="noreferrer" target="_blank">↗</a>)}</span> : null}</section>;
 }
 
 function FilterControls({ onTogglePriority, onTopicChange, showPriority, topic, topicOptions }: { onTogglePriority: () => void; onTopicChange: (topic: string) => void; showPriority: boolean; topic: string; topicOptions: readonly string[] }) {

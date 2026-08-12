@@ -89,15 +89,16 @@ export const postgresAssessmentPipelineArchive: AssessmentPipelineArchive = {
   async upsertSourceEvidence({ association, candidateId, evidence }: { association: "primary" | "related"; candidateId: string; evidence: SourceEvidence }) {
     await withTransaction(async (client) => {
       const result = await client.query<{ id: number }>(
-        `INSERT INTO source_evidence (canonical_identifier, connector_id, source_name, source_url, collected_at, trust)
-        VALUES ($1, $2, $3, $4, $5, $6)
+        `INSERT INTO source_evidence (canonical_identifier, connector_id, source_name, source_title, source_url, collected_at, trust)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
         ON CONFLICT (canonical_identifier, connector_id, source_url)
-        DO UPDATE SET collected_at = EXCLUDED.collected_at, updated_at = NOW()
+        DO UPDATE SET source_title = EXCLUDED.source_title, collected_at = EXCLUDED.collected_at, updated_at = NOW()
         RETURNING id`,
         [
           evidence.canonicalIdentifier,
           evidence.connectorId,
           evidence.sourceName,
+          evidence.sourceTitle,
           evidence.sourceUrl,
           evidence.collectedAt,
           evidence.trust,

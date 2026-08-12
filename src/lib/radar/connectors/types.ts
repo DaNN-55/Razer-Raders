@@ -7,6 +7,7 @@ export type SourceEvidence = {
   collectedAt: string;
   connectorId: ConnectorId;
   sourceName: string;
+  sourceTitle: string;
   sourceUrl: string;
   trust: "untrusted";
 };
