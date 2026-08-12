@@ -5,6 +5,11 @@ type AssessmentStateRow = QueryResultRow & {
   candidate_count: number;
 };
 
+type AssessmentDelayRow = QueryResultRow & {
+  assessment_delay_detail: string | null;
+  candidate_count: number;
+};
+
 type EvaluatingCandidateRow = QueryResultRow & {
   canonical_identifier: string;
   last_collected_at: Date;
@@ -22,6 +27,17 @@ export function createArchiveReader({ now, query }: { now: () => Date; query: Ar
 
   return {
     async getAssessmentState(): Promise<AssessmentState> {
+      const delayResult = await query(
+        `SELECT COUNT(*)::integer AS candidate_count, MAX(assessment_delay_detail) AS assessment_delay_detail
+        FROM radar_candidates
+        WHERE evaluation_status = 'assessment-delayed'
+          AND last_collected_at >= $1`,
+        [observationWindowStart()],
+      ) as { rows: AssessmentDelayRow[] };
+      const delayedCandidateCount = delayResult.rows[0]?.candidate_count ?? 0;
+      const delayDetail = delayResult.rows[0]?.assessment_delay_detail;
+      if (delayedCandidateCount > 0 && delayDetail) return { candidateCount: delayedCandidateCount, detail: delayDetail, status: "assessment-delayed" };
+
       const result = await query(
         `SELECT COUNT(*)::integer AS candidate_count
         FROM radar_candidates

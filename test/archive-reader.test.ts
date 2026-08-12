@@ -9,6 +9,7 @@ test("固定时钟下仅查询七天 Observation Window 内的评估 Candidate�
   const queries: { text: string; values: readonly unknown[] | undefined }[] = [];
   const query: ArchiveQuery = async (text, values) => {
     queries.push({ text, values });
+    if (text.includes("assessment_delay_detail")) return { rows: [{ assessment_delay_detail: null, candidate_count: 0 }] };
     if (text.includes("COUNT(*)")) return { rows: [{ candidate_count: 2 }] };
     return {
       rows: [
@@ -58,20 +59,40 @@ test("固定时钟下仅查询七天 Observation Window 内的评估 Candidate�
   ]);
   assert.deepEqual(queries.map((query) => query.values), [
     [new Date(windowStart)],
+    [new Date(windowStart)],
     [new Date(windowStart), 2],
   ]);
   assert.ok(queries.every((query) => query.text.includes("last_collected_at >= $1")));
-  assert.match(queries[1]?.text ?? "", /ORDER BY ranking_score DESC, last_collected_at DESC/);
+  assert.match(queries[2]?.text ?? "", /ORDER BY ranking_score DESC, last_collected_at DESC/);
 });
 
 test("固定时钟下，窗口外的 Candidate 不会让评估状态变为可见", async () => {
   const query: ArchiveQuery = async (text, values) => {
     assert.ok(text.includes("COUNT(*)"));
     assert.deepEqual(values, [new Date(windowStart)]);
-    return { rows: [{ candidate_count: 0 }] };
+    return text.includes("assessment_delay_detail")
+      ? { rows: [{ assessment_delay_detail: null, candidate_count: 0 }] }
+      : { rows: [{ candidate_count: 0 }] };
   };
 
   const state = await createArchiveReader({ now: () => now, query }).getAssessmentState();
 
   assert.deepEqual(state, { candidateCount: 0, status: "unpublished" });
+});
+
+test("固定时钟下，运行时耗尽重试的 Candidate 会以 Assessment Delay 对外可见", async () => {
+  const state = await createArchiveReader({
+    now: () => now,
+    query: async (text, values) => {
+      assert.deepEqual(values, [new Date(windowStart)]);
+      if (!text.includes("assessment_delay_detail")) throw new Error("存在 Assessment Delay 时不应继续读取评估队列。");
+      return { rows: [{ assessment_delay_detail: "Compatible Runtime 请求失败：HTTP 503（已重试 3 次）", candidate_count: 2 }] };
+    },
+  }).getAssessmentState();
+
+  assert.deepEqual(state, {
+    candidateCount: 2,
+    detail: "Compatible Runtime 请求失败：HTTP 503（已重试 3 次）",
+    status: "assessment-delayed",
+  });
 });

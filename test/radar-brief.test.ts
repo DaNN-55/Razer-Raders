@@ -47,6 +47,38 @@ test("Brief API 输出 evaluating 状态但只携带已发布 Snapshot", async (
   assert.deepEqual(await response.json(), payload);
 });
 
+test("Brief API 将 Assessment Delay 与已有已发布日报同时透明呈现", async () => {
+  const publishedSignal = signals[0];
+  if (!publishedSignal) throw new Error("Fixture 缺少已发布 Radar Signal。");
+  const payload = createArchiveRadarBrief({
+    assessment: {
+      candidateCount: 2,
+      detail: "Compatible Runtime 请求失败：HTTP 503（已重试 3 次）",
+      status: "assessment-delayed",
+    },
+    brief: {
+      publishedAt: "2026-08-12T01:00:00.000Z",
+      provenance: { configurationVersion: "profile@v1", modelRuntimeId: "compatible:fixture", pipelineVersion: "assessment-pipeline@v1", rankingPolicyVersion: "v0.1" },
+      signals: [publishedSignal],
+    },
+    connectors: [{ caption: "公开趋势页", detail: "HTTP 429", name: "GitHub Trending", status: "采集失败", tone: "muted" }],
+    topicOptions: ["全部主题"],
+  });
+
+  const response = await createBriefGetHandler(async () => payload)();
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    ...payload,
+    assessmentDelay: {
+      candidateCount: 2,
+      detail: "Compatible Runtime 请求失败：HTTP 503（已重试 3 次）",
+    },
+    availability: "assessment-delayed",
+    signals: [publishedSignal],
+  });
+});
+
 test("未配置数据库时，公开 Brief 不再回退到 Fixture", async () => {
   const brief = createUnpublishedRadarBrief(["全部主题"]);
 

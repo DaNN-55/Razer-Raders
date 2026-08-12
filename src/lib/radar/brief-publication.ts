@@ -46,18 +46,21 @@ type PublishBriefInput = {
 export type PublicationArchive = {
   getCandidatesForPublication: () => Promise<readonly PublicationCandidate[]>;
   hasPublishedBrief: (publicationDay: string) => Promise<boolean>;
+  markCandidateAssessmentDelayed: (input: { candidateId: string; detail: string }) => Promise<void>;
   publishBrief: (input: PublishBriefInput) => Promise<"already-published" | "published">;
   recordPipelineStage: (input: { collectionRunId?: string; detail?: string; publicationDay: string; stage: PipelineStage; status: PipelineStageStatus }) => Promise<void>;
 };
 
 export type PublicationResult =
   | { briefId: string; signalCount: number; status: "published" }
+  | { reason: string; status: "delayed" }
   | { reason: string; status: "rejected" }
   | { status: "already-published" };
 
 type CitationAccessibility = (url: string) => Promise<boolean>;
 
 const citationSections = ["happened", "whyNow", "technicalBasis"] as const;
+const runtimeAttemptLimit = 3;
 
 function isNonEmptyText(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
@@ -164,13 +167,21 @@ export function createBriefPublisher(input: {
 
     const assessments: { assessment: GroundedAssessment; candidate: PublicationCandidate }[] = [];
     for (const candidate of candidates) {
-      let assessment: GroundedAssessment;
-      try {
-        assessment = await runtime.assess(candidate);
-      } catch (error) {
-        const reason = error instanceof Error ? error.message : "Compatible Runtime 评估失败。";
+      let assessment: GroundedAssessment | null = null;
+      let latestError = "Compatible Runtime 评估失败。";
+      for (let attempt = 1; attempt <= runtimeAttemptLimit; attempt += 1) {
+        try {
+          assessment = await runtime.assess(candidate);
+          break;
+        } catch (error) {
+          latestError = error instanceof Error ? error.message : "Compatible Runtime 评估失败。";
+        }
+      }
+      if (!assessment) {
+        const reason = `${latestError}（已重试 ${runtimeAttemptLimit} 次）`;
+        await archive.markCandidateAssessmentDelayed({ candidateId: candidate.canonicalIdentifier, detail: reason });
         await archive.recordPipelineStage({ detail: reason, publicationDay, stage: "assessment", status: "failed" });
-        return { reason: `${candidate.title}：${reason}`, status: "rejected" };
+        return { reason: `${candidate.title}：${reason}`, status: "delayed" };
       }
       assessments.push({ assessment, candidate });
     }

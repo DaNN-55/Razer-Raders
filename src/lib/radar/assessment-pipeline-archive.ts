@@ -65,6 +65,14 @@ export const postgresAssessmentPipelineArchive: AssessmentPipelineArchive = {
         ON CONFLICT (canonical_identifier)
         DO UPDATE SET connector_id = EXCLUDED.connector_id, title = EXCLUDED.title, source_url = EXCLUDED.source_url,
           last_collected_at = EXCLUDED.last_collected_at, observation_count = radar_candidates.observation_count + 1,
+          evaluation_status = CASE
+            WHEN radar_candidates.evaluation_status = 'assessment-delayed' THEN 'evaluating'
+            ELSE radar_candidates.evaluation_status
+          END,
+          assessment_delay_detail = CASE
+            WHEN radar_candidates.evaluation_status = 'assessment-delayed' THEN NULL
+            ELSE radar_candidates.assessment_delay_detail
+          END,
           signal_state = '持续升温', priority = CASE WHEN radar_candidates.observation_count + 1 >= 2 THEN '高优先级' ELSE '值得关注' END,
           ranking_score = radar_candidates.ranking_score + 1,
           selection_reason = '在 Observation Window 内第 ' || (radar_candidates.observation_count + 1) || ' 次被收集，仍处于评估队列。',

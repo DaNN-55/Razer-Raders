@@ -73,6 +73,7 @@ async function publishDailyBriefIfConfigured() {
     runtime,
   }).publishDailyBrief();
   if (result.status === "published") console.log(`日报已发布：${result.signalCount} 个信号`);
+  if (result.status === "delayed") console.error(`日报评估延迟：${result.reason}`);
   if (result.status === "rejected") console.error(`日报未发布：${result.reason}`);
   return result;
 }

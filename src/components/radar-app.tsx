@@ -87,7 +87,7 @@ function getThemeServerSnapshot(): Theme {
 }
 
 export function RadarApp({ brief }: { brief: RadarBrief }) {
-  const { availability, connectors, mode, pendingCandidateCount, provenance, publishedAt, signals, topicOptions } = brief;
+  const { assessmentDelay, availability, connectors, mode, pendingCandidateCount, provenance, publishedAt, signals, topicOptions } = brief;
   const [view, setView] = useState<View>("brief");
   const [selectedId, setSelectedId] = useState<string | null>(signals[0]?.id ?? null);
   const [topic, setTopic] = useState("全部主题");
@@ -164,6 +164,7 @@ export function RadarApp({ brief }: { brief: RadarBrief }) {
           <BriefView
             connectors={connectors}
             availability={availability}
+            assessmentDelay={assessmentDelay}
             filterOpen={filterOpen}
             hasAnySignals={signals.length > 0}
             mode={mode}
@@ -219,6 +220,7 @@ function ThemeToggle({ compact = false, onToggle, theme }: { compact?: boolean; 
 
 function BriefView({
   availability,
+  assessmentDelay,
   connectors,
   filterOpen,
   hasAnySignals,
@@ -239,6 +241,7 @@ function BriefView({
   topicOptions,
 }: {
   availability: RadarBrief["availability"];
+  assessmentDelay?: RadarBrief["assessmentDelay"];
   connectors: readonly RadarConnector[];
   filterOpen: boolean;
   hasAnySignals: boolean;
@@ -258,7 +261,7 @@ function BriefView({
   onTopicChange: (topic: string) => void;
   topicOptions: readonly string[];
 }) {
-  const presentation = { availability, hasPublishedSignals: hasAnySignals, pendingCandidateCount, visibleSignalCount: visibleSignals.length };
+  const presentation = { assessmentDelay, availability, hasPublishedSignals: hasAnySignals, pendingCandidateCount, visibleSignalCount: visibleSignals.length };
   const assessmentBanner = getAssessmentBanner(presentation);
 
   return (
@@ -281,7 +284,7 @@ function BriefView({
               />
               {signal.id === selectedSignal?.id && <div className="inline-detail"><SignalDetail isSaved={saved.includes(signal.id)} mode={mode} onToggleSaved={() => onToggleSaved(signal.id)} provenance={provenance} signal={signal} /></div>}
             </div>
-          )) : <EmptySignals availability={availability} hasAnySignals={hasAnySignals} onReset={() => onTopicChange("全部主题")} pendingCandidateCount={pendingCandidateCount} />}
+          )) : <EmptySignals assessmentDelay={assessmentDelay} availability={availability} hasAnySignals={hasAnySignals} onReset={() => onTopicChange("全部主题")} pendingCandidateCount={pendingCandidateCount} />}
         </div>
       </section>
 
@@ -432,8 +435,11 @@ function ConfigView({ connectors }: { connectors: readonly RadarConnector[] }) {
 
 function Fieldset({ children, number, title }: { children: React.ReactNode; number: string; title: string }) { return <fieldset><legend><span>{number}</span>{title}</legend>{children}</fieldset>; }
 
-function EmptySignals({ availability, hasAnySignals, onReset, pendingCandidateCount }: { availability: RadarBrief["availability"]; hasAnySignals: boolean; onReset: () => void; pendingCandidateCount: number }) {
+function EmptySignals({ assessmentDelay, availability, hasAnySignals, onReset, pendingCandidateCount }: { assessmentDelay?: RadarBrief["assessmentDelay"]; availability: RadarBrief["availability"]; hasAnySignals: boolean; onReset: () => void; pendingCandidateCount: number }) {
   if (!hasAnySignals) {
+    if (availability === "assessment-delayed") {
+      return <div className="empty-state"><RadarIcon size={30} /><h2>评估暂时延迟</h2><p>{assessmentDelay?.detail ?? "配置的 Model Runtime 暂不可用。"}</p><p>不会切换到其他模型，也不会发布没有依据的半成品日报。</p></div>;
+    }
     if (availability === "evaluating") {
       return <div className="empty-state"><RadarIcon size={30} /><h2>正在评估 {pendingCandidateCount} 个候选</h2><p>这些 Candidate 已进入 Radar Archive；完成证据补充、排序和发布校验后，才会出现在 Daily Brief。</p></div>;
     }

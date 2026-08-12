@@ -9,6 +9,7 @@ test("采集结束后按 CST 日期将结果和 Collection Run 关联到 Pipelin
     archive: {
       getCandidatesForPublication: async () => [],
       hasPublishedBrief: async () => false,
+      markCandidateAssessmentDelayed: async () => undefined,
       publishBrief: async () => "published",
       recordPipelineStage: async (event) => { events.push(event); },
     },

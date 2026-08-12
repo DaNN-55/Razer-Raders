@@ -4,7 +4,10 @@ import type { GroundedAssessment, ModelRuntime } from "../../src/lib/radar/asses
 import { postgresBriefPublicationArchive } from "../../src/lib/radar/brief-publication-archive.ts";
 import { createBriefPublisher, type PublicationCandidate } from "../../src/lib/radar/brief-publication.ts";
 import { recordCollectionCycle } from "../../src/lib/radar/collection-stage-recorder.ts";
+import { postgresAssessmentPipelineArchive } from "../../src/lib/radar/assessment-pipeline-archive.ts";
+import { createAssessmentPipeline, type SourceConnector } from "../../src/lib/radar/assessment-pipeline.ts";
 import { getDatabasePool } from "../../src/lib/radar/database.ts";
+import type { Candidate } from "../../src/lib/radar/connectors/types.ts";
 
 const candidate: PublicationCandidate = {
   canonicalIdentifier: "github:openai/codex",
@@ -160,6 +163,27 @@ async function seedSecondCandidate() {
   );
 }
 
+function recollectedCandidate(): Candidate {
+  return {
+    canonicalIdentifier: candidate.canonicalIdentifier,
+    collectedAt: "2026-08-12T01:20:00.000Z",
+    connectorId: "github-trending",
+    evidence: [{
+      canonicalIdentifier: candidate.evidence[0]!.canonicalIdentifier,
+      collectedAt: "2026-08-12T01:20:00.000Z",
+      connectorId: "github-trending",
+      sourceName: candidate.evidence[0]!.sourceName,
+      sourceTitle: candidate.evidence[0]!.sourceTitle,
+      sourceUrl: candidate.evidence[0]!.sourceUrl,
+      trust: "untrusted",
+    }],
+    signalType: "project",
+    subjectCanonicalIdentifier: candidate.canonicalIdentifier,
+    title: candidate.title,
+    url: candidate.evidence[0]!.sourceUrl,
+  };
+}
+
 beforeEach(async () => {
   await getDatabasePool().query(
     "TRUNCATE TABLE pipeline_runs, radar_signals, brief_snapshots, candidate_source_evidence, source_evidence, radar_candidates, radar_subjects RESTART IDENTITY CASCADE",
@@ -261,6 +285,139 @@ test("无效固定 Runtime 被拒绝后，真实 Archive 不会产生 Snapshot",
   const brief = await response.json();
   assert.equal(brief.availability, "evaluating");
   assert.deepEqual(brief.signals, []);
+});
+
+test("固定失败 Runtime 耗尽重试后，API 明确呈现 Assessment Delay，后续采集可恢复", { concurrency: false }, async () => {
+  let attempts = 0;
+  const delayed = await createBriefPublisher({
+    archive: postgresBriefPublicationArchive,
+    clock: () => new Date("2026-08-12T01:00:00.000Z"),
+    configurationVersion: "profile@v1",
+    createBriefId: () => "brief-e2e-delayed",
+    isCitationAccessible: async () => true,
+    pipelineVersion: "assessment-pipeline@v1",
+    runtime: {
+      assess: async () => {
+        attempts += 1;
+        throw new Error("Compatible Runtime 请求失败：HTTP 503");
+      },
+      id: "compatible:unavailable-e2e",
+    },
+  }).publishDailyBrief();
+
+  assert.equal(delayed.status, "delayed");
+  assert.equal(attempts, 3);
+  const delayedCandidates = await getDatabasePool().query<{ assessment_delay_detail: string; evaluation_status: string }>(
+    "SELECT evaluation_status, assessment_delay_detail FROM radar_candidates",
+  );
+  assert.deepEqual(delayedCandidates.rows, [{
+    assessment_delay_detail: "Compatible Runtime 请求失败：HTTP 503（已重试 3 次）",
+    evaluation_status: "assessment-delayed",
+  }]);
+
+  const delayedResponse = await fetch(`${baseUrl}/api/brief`);
+  const delayedBrief = await delayedResponse.json();
+  assert.equal(delayedResponse.status, 200);
+  assert.equal(delayedBrief.availability, "assessment-delayed");
+  assert.deepEqual(delayedBrief.assessmentDelay, {
+    candidateCount: 1,
+    detail: "Compatible Runtime 请求失败：HTTP 503（已重试 3 次）",
+  });
+  assert.deepEqual(delayedBrief.signals, []);
+
+  await postgresAssessmentPipelineArchive.upsertCandidate(recollectedCandidate());
+  const recollectedCandidateState = await getDatabasePool().query<{ assessment_delay_detail: string | null; evaluation_status: string }>(
+    "SELECT evaluation_status, assessment_delay_detail FROM radar_candidates",
+  );
+  assert.deepEqual(recollectedCandidateState.rows, [{ assessment_delay_detail: null, evaluation_status: "evaluating" }]);
+  const recovered = await createBriefPublisher({
+    archive: postgresBriefPublicationArchive,
+    clock: () => new Date("2026-08-12T01:30:00.000Z"),
+    configurationVersion: "profile@v1",
+    createBriefId: () => "brief-e2e-recovered",
+    isCitationAccessible: async () => true,
+    pipelineVersion: "assessment-pipeline@v1",
+    runtime: fixedRuntime(validAssessment),
+  }).publishDailyBrief();
+
+  assert.deepEqual(recovered, { briefId: "brief-e2e-recovered", signalCount: 1, status: "published" });
+  const recoveredResponse = await fetch(`${baseUrl}/api/brief`);
+  const recoveredBrief = await recoveredResponse.json();
+  assert.equal(recoveredBrief.availability, "published");
+  assert.equal(recoveredBrief.assessmentDelay, undefined);
+});
+
+test("重复采集已发布 Candidate 不会将它重新放入待评估队列", { concurrency: false }, async () => {
+  const published = await createBriefPublisher({
+    archive: postgresBriefPublicationArchive,
+    clock: () => new Date("2026-08-12T01:00:00.000Z"),
+    configurationVersion: "profile@v1",
+    createBriefId: () => "brief-e2e-no-republish",
+    isCitationAccessible: async () => true,
+    pipelineVersion: "assessment-pipeline@v1",
+    runtime: fixedRuntime(validAssessment),
+  }).publishDailyBrief();
+  assert.equal(published.status, "published");
+
+  await postgresAssessmentPipelineArchive.upsertCandidate(recollectedCandidate());
+  const state = await getDatabasePool().query<{ assessment_delay_detail: string | null; evaluation_status: string }>(
+    "SELECT evaluation_status, assessment_delay_detail FROM radar_candidates",
+  );
+  assert.deepEqual(state.rows, [{ assessment_delay_detail: null, evaluation_status: "published" }]);
+  assert.deepEqual(await postgresBriefPublicationArchive.getCandidatesForPublication(), []);
+});
+
+test("单一 Source Connector 降级不会阻断已发布 Brief，并在恢复后更新公开 Health", { concurrency: false }, async () => {
+  const published = await createBriefPublisher({
+    archive: postgresBriefPublicationArchive,
+    clock: () => new Date("2026-08-12T01:00:00.000Z"),
+    configurationVersion: "profile@v1",
+    createBriefId: () => "brief-e2e-connector-health",
+    isCitationAccessible: async () => true,
+    pipelineVersion: "assessment-pipeline@v1",
+    runtime: fixedRuntime(validAssessment),
+  }).publishDailyBrief();
+  assert.equal(published.status, "published");
+
+  const failingConnector: SourceConnector = {
+    collect: async () => { throw new Error("HTTP 429"); },
+    id: "github-trending",
+  };
+  const collection = await createAssessmentPipeline({
+    archive: postgresAssessmentPipelineArchive,
+    clock: () => new Date("2026-08-12T02:00:00.000Z"),
+    createRunId: () => "collection-run-e2e-connector-failed",
+    modelRuntime: { id: "fixture-runtime" },
+    sourceConnectors: [failingConnector],
+  }).runCollectionCycle("github-trending");
+  assert.deepEqual(collection, {
+    connectorId: "github-trending",
+    errorMessage: "HTTP 429",
+    runId: "collection-run-e2e-connector-failed",
+    status: "failed",
+  });
+  const degradedResponse = await fetch(`${baseUrl}/api/brief`);
+  const degradedBrief = await degradedResponse.json();
+  assert.equal(degradedBrief.availability, "published");
+  assert.equal(degradedBrief.signals[0]?.title, "openai/codex");
+  assert.deepEqual(degradedBrief.connectors.find((connector: { name: string }) => connector.name === "GitHub Trending"), {
+    caption: "公开趋势页 + 仓库补证",
+    detail: "HTTP 429",
+    name: "GitHub Trending",
+    status: "采集失败",
+    tone: "muted",
+  });
+
+  await postgresAssessmentPipelineArchive.markConnectorFresh({ collectedAt: "2026-08-12T02:00:00.000Z", connectorId: "github-trending" });
+  const recoveredResponse = await fetch(`${baseUrl}/api/brief`);
+  const recoveredBrief = await recoveredResponse.json();
+  assert.deepEqual(recoveredBrief.connectors.find((connector: { name: string }) => connector.name === "GitHub Trending"), {
+    caption: "公开趋势页 + 仓库补证",
+    detail: null,
+    name: "GitHub Trending",
+    status: "新鲜",
+    tone: "fresh",
+  });
 });
 
 test("跨日发布不会改写前一日 Snapshot 与 Provenance", { concurrency: false }, async () => {

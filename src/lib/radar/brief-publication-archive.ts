@@ -63,6 +63,15 @@ export const postgresBriefPublicationArchive: PublicationArchive = {
     return (result.rowCount ?? 0) > 0;
   },
 
+  async markCandidateAssessmentDelayed({ candidateId, detail }) {
+    await getDatabasePool().query(
+      `UPDATE radar_candidates
+      SET assessment_delay_detail = $2, evaluation_status = 'assessment-delayed', updated_at = NOW()
+      WHERE id = $1`,
+      [candidateId, detail],
+    );
+  },
+
   async publishBrief({ id, provenance, publicationDay, publishedAt, signals }: { id: string; provenance: BriefProvenance; publicationDay: string; publishedAt: string; signals: readonly PublishedSignalInput[] }) {
     return withTransaction(async (client) => {
       await client.query("SELECT pg_advisory_xact_lock(hashtext('razer-raders:brief:' || $1))", [publicationDay]);
@@ -112,7 +121,7 @@ export const postgresBriefPublicationArchive: PublicationArchive = {
             JSON.stringify(signal.sectionCitations),
           ],
         );
-        await client.query("UPDATE radar_candidates SET evaluation_status = 'published', updated_at = NOW() WHERE id = $1", [signal.candidateId]);
+        await client.query("UPDATE radar_candidates SET assessment_delay_detail = NULL, evaluation_status = 'published', updated_at = NOW() WHERE id = $1", [signal.candidateId]);
       }
       return "published" as const;
     });

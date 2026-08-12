@@ -33,6 +33,7 @@ const validAssessment: GroundedAssessment = {
 
 class InMemoryPublicationArchive implements PublicationArchive {
   private readonly candidates: readonly PublicationCandidate[];
+  delayedCandidates: { candidateId: string; detail: string }[] = [];
   published: Parameters<PublicationArchive["publishBrief"]>[0] | null = null;
   publishedDays: string[] = [];
   stages: { detail?: string; publicationDay: string; stage: string; status: string }[] = [];
@@ -43,6 +44,10 @@ class InMemoryPublicationArchive implements PublicationArchive {
 
   async getCandidatesForPublication() {
     return this.candidates;
+  }
+
+  async markCandidateAssessmentDelayed(input: { candidateId: string; detail: string }) {
+    this.delayedCandidates.push(input);
   }
 
   async hasPublishedBrief(publicationDay: string) {
@@ -160,6 +165,42 @@ test("校验或运行时失败会留下可诊断的阶段记录，且不发布 S
   ]);
 });
 
+test("固定失败 Runtime 在三次评估后延迟 Candidate，而不发布不完整日报", async () => {
+  const archive = new InMemoryPublicationArchive([candidate]);
+  let attempts = 0;
+
+  const result = await createFixturePublisher({
+    archive,
+    clock: () => new Date("2026-08-12T01:00:00.000Z"),
+    createBriefId: () => "brief-delayed",
+    isCitationAccessible: async () => true,
+    runtime: {
+      assess: async () => {
+        attempts += 1;
+        throw new Error("Compatible Runtime 请求失败：HTTP 503");
+      },
+      id: "compatible:unavailable-fixture",
+    },
+  }).publishDailyBrief();
+
+  assert.deepEqual(result, {
+    reason: "openai/codex：Compatible Runtime 请求失败：HTTP 503（已重试 3 次）",
+    status: "delayed",
+  });
+  assert.equal(attempts, 3);
+  assert.equal(archive.published, null);
+  assert.deepEqual(archive.delayedCandidates, [{
+    candidateId: "github:openai/codex",
+    detail: "Compatible Runtime 请求失败：HTTP 503（已重试 3 次）",
+  }]);
+  assert.deepEqual(archive.stages.at(-1), {
+    detail: "Compatible Runtime 请求失败：HTTP 503（已重试 3 次）",
+    publicationDay: "2026-08-12",
+    stage: "assessment",
+    status: "failed",
+  });
+});
+
 test("缺少事实引用或引用不可访问时，Publication Validation 拒绝发布", async () => {
   const withoutCitation: GroundedAssessment = { ...validAssessment, citations: { happened: [], technicalBasis: [], whyNow: [] } };
   const malformedArchive = new InMemoryPublicationArchive([candidate]);
@@ -238,7 +279,7 @@ test("缺少必填字段、无效结构或已有 Snapshot 时，发布流程不�
   assert.equal(existingArchive.published, null);
 });
 
-test("Runtime 不能生成有效评估时，发布流程拒绝且不写入 Snapshot", async () => {
+test("Runtime 不能生成有效评估时，发布流程延迟 Candidate 且不写入 Snapshot", async () => {
   const archive = new InMemoryPublicationArchive([candidate]);
   const result = await createFixturePublisher({
     archive,
@@ -248,7 +289,7 @@ test("Runtime 不能生成有效评估时，发布流程拒绝且不写入 Snaps
     runtime: { assess: async () => { throw new Error("Compatible Runtime 未返回有效 JSON 评估。"); }, id: "compatible:fixture" },
   }).publishDailyBrief();
 
-  assert.deepEqual(result, { reason: "openai/codex：Compatible Runtime 未返回有效 JSON 评估。", status: "rejected" });
+  assert.deepEqual(result, { reason: "openai/codex：Compatible Runtime 未返回有效 JSON 评估。（已重试 3 次）", status: "delayed" });
   assert.equal(archive.published, null);
 });
 

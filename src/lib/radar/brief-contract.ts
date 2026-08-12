@@ -16,7 +16,8 @@ export type BriefProvenance = {
 };
 
 export type RadarBrief = {
-  availability: "evaluating" | "published" | "unpublished";
+  assessmentDelay?: AssessmentDelay;
+  availability: "assessment-delayed" | "evaluating" | "published" | "unpublished";
   connectors: readonly RadarConnector[];
   mode: "fixture" | "archive";
   pendingCandidateCount: number;
@@ -27,8 +28,14 @@ export type RadarBrief = {
 };
 
 export type AssessmentState =
+  | { candidateCount: number; detail: string; status: "assessment-delayed" }
   | { candidateCount: number; status: "evaluating" }
   | { candidateCount: 0; status: "unpublished" };
+
+export type AssessmentDelay = {
+  candidateCount: number;
+  detail: string;
+};
 
 export type PublishedBrief = {
   publishedAt: string;
@@ -56,8 +63,13 @@ export function createArchiveRadarBrief(input: {
 }): RadarBrief {
   const { assessment, brief, connectors, topicOptions } = input;
 
+  const assessmentDelay = assessment.status === "assessment-delayed"
+    ? { candidateCount: assessment.candidateCount, detail: assessment.detail }
+    : undefined;
+
   return {
-    availability: assessment.status === "evaluating" ? "evaluating" : brief ? "published" : "unpublished",
+    availability: assessment.status === "assessment-delayed" ? "assessment-delayed" : assessment.status === "evaluating" ? "evaluating" : brief ? "published" : "unpublished",
+    ...(assessmentDelay ? { assessmentDelay } : {}),
     connectors,
     mode: "archive",
     pendingCandidateCount: assessment.candidateCount,
