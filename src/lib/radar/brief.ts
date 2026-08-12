@@ -7,7 +7,13 @@ import {
 import { getConnectorHealth, getLatestPublishedBrief } from "@/lib/radar/archive";
 import { isDatabaseConfigured } from "@/lib/radar/database";
 
-export type RadarConnector = (typeof fixtureConnectors)[number];
+export type RadarConnector = {
+  caption: string;
+  detail?: string | null;
+  name: string;
+  status: string;
+  tone: string;
+};
 
 export type RadarBrief = {
   connectors: readonly RadarConnector[];

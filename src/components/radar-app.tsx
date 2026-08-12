@@ -365,7 +365,7 @@ function FilterControls({ onTogglePriority, onTopicChange, showPriority, topic, 
 
 function ConnectorHealth({ compact = false, connectors }: { compact?: boolean; connectors: readonly RadarConnector[] }) {
   return <div className={`connector-list ${compact ? "is-compact" : ""}`}>
-    {connectors.map((connector) => <div className="connector-row" key={connector.name}><span><i className={`connector-dot ${connector.tone}`} />{connector.name}{!compact && <small>{connector.caption}</small>}</span><b className={connector.tone}>{connector.status}</b></div>)}
+    {connectors.map((connector) => <div className="connector-row" key={connector.name}><span><i className={`connector-dot ${connector.tone}`} />{connector.name}{!compact && <small>{connector.detail ?? connector.caption}</small>}</span><b className={connector.tone}>{connector.status}</b></div>)}
   </div>;
 }
 
