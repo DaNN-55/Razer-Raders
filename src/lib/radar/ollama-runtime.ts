@@ -29,7 +29,7 @@ export function createOllamaRuntimeFromEnvironment(
 
   return {
     id: `ollama:${model}`,
-    async assess(candidate) {
+    async assess(candidate, options) {
       const response = await runtimeFetch(`${endpoint.toString().replace(/\/$/, "")}/api/generate`, {
         body: JSON.stringify({
           format: "json",
@@ -40,7 +40,7 @@ export function createOllamaRuntimeFromEnvironment(
         }),
         headers: { "Content-Type": "application/json" },
         method: "POST",
-        signal: AbortSignal.timeout(30_000),
+        signal: options?.signal ?? AbortSignal.timeout(30_000),
       });
       if (!response.ok) throw new Error(`Ollama Runtime 请求失败：HTTP ${response.status}`);
 

@@ -30,6 +30,6 @@ export type AssessableCandidate = {
 };
 
 export type ModelRuntime = {
-  assess: (candidate: AssessableCandidate) => Promise<GroundedAssessment>;
+  assess: (candidate: AssessableCandidate, options?: { signal?: AbortSignal }) => Promise<GroundedAssessment>;
   id: string;
 };

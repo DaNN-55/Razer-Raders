@@ -1,60 +1,22 @@
 import { randomUUID } from "node:crypto";
-import { createAssessmentPipeline, type SourceConnector } from "./lib/radar/assessment-pipeline.ts";
+import { createAssessmentPipeline } from "./lib/radar/assessment-pipeline.ts";
 import { postgresAssessmentPipelineArchive } from "./lib/radar/assessment-pipeline-archive.ts";
 import { postgresBriefPublicationArchive } from "./lib/radar/brief-publication-archive.ts";
 import { createBriefPublisher } from "./lib/radar/brief-publication.ts";
-import { createEnvironmentCandidateFilter } from "./lib/radar/candidate-filter.ts";
 import { createCitationAccessibilityCheck } from "./lib/radar/citation-accessibility.ts";
 import { recordCollectionCycle } from "./lib/radar/collection-stage-recorder.ts";
 import { createDailyPublicationSchedule } from "./lib/radar/daily-publication-schedule.ts";
-import { githubTrendingConnector } from "./lib/radar/connectors/github-trending.ts";
-import { huggingFaceTrendingConnector } from "./lib/radar/connectors/hugging-face-trending.ts";
-import { createOfficialReleaseWatchlistConnector, readOfficialReleaseWatchlist } from "./lib/radar/connectors/official-release-watchlist.ts";
-import { showHnConnector } from "./lib/radar/connectors/show-hn.ts";
 import type { ConnectorId } from "./lib/radar/connectors/types.ts";
 import { getDatabasePool } from "./lib/radar/database.ts";
-import { createModelRuntimeFromEnvironment } from "./lib/radar/model-runtime.ts";
+import { createProfileCandidateFilter, createProfileSourceConnectors } from "./lib/radar/profile-collection.ts";
+import { getRequiredRadarProfile } from "./lib/radar/profile-archive.ts";
+import { createModelRuntimeFromProfile } from "./lib/radar/profile-runtime.ts";
 import { createTaskWorkerSchedule } from "./lib/radar/task-worker-schedule.ts";
 
 const defaultCollectionIntervalMs = 2 * 60 * 60 * 1000;
 
-function createConfiguredOfficialWatchlistConnector(): SourceConnector | null {
-  try {
-    const entries = readOfficialReleaseWatchlist();
-    return entries.length > 0 ? createOfficialReleaseWatchlistConnector(entries) : null;
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : "Official Release Watchlist 配置无效。";
-    return {
-      collect: async () => { throw new Error(detail); },
-      id: "official-watchlist",
-    };
-  }
-}
-
-const officialWatchlistConnector = createConfiguredOfficialWatchlistConnector();
-const sourceConnectors = [
-  githubTrendingConnector,
-  huggingFaceTrendingConnector,
-  showHnConnector,
-  ...(officialWatchlistConnector ? [officialWatchlistConnector] : []),
-];
-
-function getCollectionIntervalMs() {
-  const configured = Number(process.env.RADAR_COLLECTION_INTERVAL_MS ?? defaultCollectionIntervalMs);
-  return Number.isFinite(configured) && configured >= 60_000 ? configured : defaultCollectionIntervalMs;
-}
-
-const assessmentPipeline = createAssessmentPipeline({
-  archive: postgresAssessmentPipelineArchive,
-  candidateFilter: createEnvironmentCandidateFilter(),
-  clock: () => new Date(),
-  createRunId: randomUUID,
-  modelRuntime: { id: process.env.RADAR_MODEL_RUNTIME_ID ?? "not-configured" },
-  sourceConnectors,
-});
-
-async function collectSourceIntoArchive(connectorId: ConnectorId) {
-  const result = await assessmentPipeline.runCollectionCycle(connectorId);
+async function collectSourceIntoArchive(connectorId: ConnectorId, pipeline: ReturnType<typeof createAssessmentPipeline>) {
+  const result = await pipeline.runCollectionCycle(connectorId);
   await recordCollectionCycle({
     archive: postgresBriefPublicationArchive,
     clock: () => new Date(),
@@ -69,18 +31,24 @@ async function collectSourceIntoArchive(connectorId: ConnectorId) {
 }
 
 async function collectConfiguredSources() {
-  const results = await Promise.all([
-    collectSourceIntoArchive("github-trending"),
-    collectSourceIntoArchive("hugging-face-trending"),
-    collectSourceIntoArchive("show-hn"),
-    ...(officialWatchlistConnector ? [collectSourceIntoArchive("official-watchlist")] : []),
-  ]);
+  const profile = await getRequiredRadarProfile();
+  const sourceConnectors = createProfileSourceConnectors(profile);
+  const pipeline = createAssessmentPipeline({
+    archive: postgresAssessmentPipelineArchive,
+    candidateFilter: createProfileCandidateFilter(profile),
+    clock: () => new Date(),
+    createRunId: randomUUID,
+    modelRuntime: { id: profile.runtime.kind },
+    sourceConnectors,
+  });
+  const results = await Promise.all(sourceConnectors.map((connector) => collectSourceIntoArchive(connector.id, pipeline)));
   return results.some((result) => result.status === "succeeded") ? "succeeded" as const : "failed" as const;
 }
 
 async function publishDailyBriefIfConfigured() {
-  const runtime = createModelRuntimeFromEnvironment();
-  const runtimeName = process.env.RADAR_MODEL_RUNTIME ?? "compatible";
+  const profile = await getRequiredRadarProfile();
+  const runtime = createModelRuntimeFromProfile(profile);
+  const runtimeName = profile.runtime.kind;
   if (!runtime) {
     const detail = `${runtimeName} Runtime 未配置或不受支持。`;
     console.log(`${detail} 跳过当日日报发布。`);
@@ -96,16 +64,19 @@ async function publishDailyBriefIfConfigured() {
     return { reason: detail, status: "rejected" as const };
   }
 
-  const candidates = await postgresBriefPublicationArchive.getCandidatesForPublication();
+  const candidates = await postgresBriefPublicationArchive.getCandidatesForPublication(profile.runtime.maxAssessmentsPerCycle);
   const isCitationAccessible = createCitationAccessibilityCheck(
     candidates.flatMap((candidate) => candidate.evidence.map((evidence) => evidence.sourceUrl)),
   );
   const result = await createBriefPublisher({
     archive: postgresBriefPublicationArchive,
+    assessmentBudgetMs: profile.runtime.cycleBudgetSeconds * 1_000,
+    assessmentConcurrency: profile.runtime.modelConcurrency,
     clock: () => new Date(),
-    configurationVersion: process.env.RADAR_CONFIGURATION_VERSION ?? "profile@v1",
+    configurationVersion: profile.id,
     createBriefId: randomUUID,
     isCitationAccessible,
+    maxAssessments: profile.runtime.maxAssessmentsPerCycle,
     pipelineVersion: process.env.RADAR_PIPELINE_VERSION ?? "assessment-pipeline@v1",
     runtime,
   }).publishDailyBrief();
@@ -123,7 +94,8 @@ async function publishDailyBriefWhenDue() {
 async function runWorker() {
   const schedule = createTaskWorkerSchedule({
     clock: () => new Date(),
-    collectionIntervalMs: getCollectionIntervalMs(),
+    collectionIntervalMs: defaultCollectionIntervalMs,
+    getCollectionIntervalMs: async () => (await getRequiredRadarProfile()).collectionIntervalMs,
     collect: collectConfiguredSources,
     onError: (error) => console.error("Task Worker 任务失败：", error),
     publish: publishDailyBriefWhenDue,

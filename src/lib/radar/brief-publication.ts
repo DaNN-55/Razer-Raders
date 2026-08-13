@@ -44,7 +44,7 @@ type PublishBriefInput = {
 };
 
 export type PublicationArchive = {
-  getCandidatesForPublication: () => Promise<readonly PublicationCandidate[]>;
+  getCandidatesForPublication: (limit?: number) => Promise<readonly PublicationCandidate[]>;
   hasPublishedBrief: (publicationDay: string) => Promise<boolean>;
   markCandidateAssessmentDelayed: (input: { candidateId: string; detail: string }) => Promise<void>;
   publishBrief: (input: PublishBriefInput) => Promise<"already-published" | "published">;
@@ -58,6 +58,7 @@ export type PublicationResult =
   | { status: "already-published" };
 
 type CitationAccessibility = (url: string) => Promise<boolean>;
+type AssessmentResult = { assessment: GroundedAssessment; candidate: PublicationCandidate } | { candidate: PublicationCandidate; reason: string };
 
 const citationSections = ["happened", "whyNow", "technicalBasis"] as const;
 const runtimeAttemptLimit = 3;
@@ -123,10 +124,13 @@ function toPublishedSignal(candidate: PublicationCandidate, assessment: Grounded
 
 export function createBriefPublisher(input: {
   archive: PublicationArchive;
+  assessmentBudgetMs?: number;
+  assessmentConcurrency?: number;
   clock: () => Date;
   configurationVersion: string;
   createBriefId: () => string;
   isCitationAccessible: CitationAccessibility;
+  maxAssessments?: number;
   pipelineVersion: string;
   runtime: ModelRuntime;
 }) {
@@ -139,6 +143,9 @@ export function createBriefPublisher(input: {
     pipelineVersion,
     runtime,
   } = input;
+  const assessmentBudgetMs = input.assessmentBudgetMs ?? 30 * 60 * 1000;
+  const assessmentConcurrency = input.assessmentConcurrency ?? 1;
+  const maxAssessments = input.maxAssessments ?? 10;
 
   async function publishDailyBrief(): Promise<PublicationResult> {
     const publishedAt = clock();
@@ -149,7 +156,7 @@ export function createBriefPublisher(input: {
     }
 
     await archive.recordPipelineStage({ publicationDay, stage: "assessment", status: "started" });
-    const candidates = await archive.getCandidatesForPublication();
+    const candidates = await archive.getCandidatesForPublication(maxAssessments);
     if (candidates.length === 0) {
       const reason = "Observation Window 内没有可发布的 Candidate。";
       await archive.recordPipelineStage({ publicationDay, stage: "assessment", status: "succeeded" });
@@ -165,26 +172,43 @@ export function createBriefPublisher(input: {
       return { reason, status: "rejected" };
     }
 
-    const assessments: { assessment: GroundedAssessment; candidate: PublicationCandidate }[] = [];
-    for (const candidate of candidates) {
+    const deadline = Date.now() + assessmentBudgetMs;
+    const assessCandidate = async (candidate: PublicationCandidate): Promise<AssessmentResult> => {
+      if (Date.now() >= deadline) return { candidate, reason: "本轮评估时间预算已耗尽。" };
       let assessment: GroundedAssessment | null = null;
       let latestError = "Compatible Runtime 评估失败。";
       for (let attempt = 1; attempt <= runtimeAttemptLimit; attempt += 1) {
+        if (Date.now() >= deadline) return { candidate, reason: "本轮评估时间预算已耗尽。" };
         try {
-          assessment = await runtime.assess(candidate);
+          assessment = await runtime.assess(candidate, { signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())) });
           break;
         } catch (error) {
           latestError = error instanceof Error ? error.message : "Compatible Runtime 评估失败。";
         }
       }
       if (!assessment) {
-        const reason = `${latestError}（已重试 ${runtimeAttemptLimit} 次）`;
-        await archive.markCandidateAssessmentDelayed({ candidateId: candidate.canonicalIdentifier, detail: reason });
-        await archive.recordPipelineStage({ detail: reason, publicationDay, stage: "assessment", status: "failed" });
-        return { reason: `${candidate.title}：${reason}`, status: "delayed" };
+        return { candidate, reason: `${latestError}（已重试 ${runtimeAttemptLimit} 次）` };
       }
-      assessments.push({ assessment, candidate });
+      return { assessment, candidate };
+    };
+    const results: AssessmentResult[] = new Array(candidates.length);
+    let nextCandidateIndex = 0;
+    const workers = Array.from({ length: Math.min(assessmentConcurrency, candidates.length) }, async () => {
+      while (nextCandidateIndex < candidates.length) {
+        const candidateIndex = nextCandidateIndex;
+        nextCandidateIndex += 1;
+        const candidate = candidates[candidateIndex];
+        if (candidate) results[candidateIndex] = await assessCandidate(candidate);
+      }
+    });
+    await Promise.all(workers);
+    const failure = results.find((result) => "reason" in result);
+    if (failure && "reason" in failure) {
+      await archive.markCandidateAssessmentDelayed({ candidateId: failure.candidate.canonicalIdentifier, detail: failure.reason });
+      await archive.recordPipelineStage({ detail: failure.reason, publicationDay, stage: "assessment", status: "failed" });
+      return { reason: `${failure.candidate.title}：${failure.reason}`, status: "delayed" };
     }
+    const assessments = results as { assessment: GroundedAssessment; candidate: PublicationCandidate }[];
 
     await archive.recordPipelineStage({ publicationDay, stage: "assessment", status: "succeeded" });
     await archive.recordPipelineStage({ publicationDay, stage: "validation", status: "started" });

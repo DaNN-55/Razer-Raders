@@ -24,7 +24,7 @@ function hasPublicationEvidence(value: CandidateRow): boolean {
 }
 
 export const postgresBriefPublicationArchive: PublicationArchive = {
-  async getCandidatesForPublication() {
+  async getCandidatesForPublication(limit = 10) {
     const result = await getDatabasePool().query<CandidateRow>(
       `SELECT candidate.canonical_identifier, candidate.title, candidate.signal_state, candidate.priority,
         candidate.ranking_score, candidate.ranking_policy_version, candidate.selection_reason,
@@ -41,7 +41,8 @@ export const postgresBriefPublicationArchive: PublicationArchive = {
         AND candidate.last_collected_at >= NOW() - INTERVAL '7 days'
       GROUP BY candidate.id
       ORDER BY candidate.ranking_score DESC, candidate.last_collected_at DESC
-      LIMIT 10`,
+      LIMIT $1`,
+      [limit],
     );
     return result.rows.filter(hasPublicationEvidence).map((candidate) => ({
       canonicalIdentifier: candidate.canonical_identifier,

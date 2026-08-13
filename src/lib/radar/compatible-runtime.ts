@@ -31,7 +31,7 @@ export function createCompatibleRuntimeFromEnvironment(
 
   return {
     id: `compatible:${model}`,
-    async assess(candidate) {
+    async assess(candidate, options) {
       const response = await runtimeFetch(`${endpoint.toString().replace(/\/$/, "")}/chat/completions`, {
         body: JSON.stringify({
           messages: [
@@ -47,7 +47,7 @@ export function createCompatibleRuntimeFromEnvironment(
           "Content-Type": "application/json",
         },
         method: "POST",
-        signal: AbortSignal.timeout(30_000),
+        signal: options?.signal ?? AbortSignal.timeout(30_000),
       });
       if (!response.ok) throw new Error(`Compatible Runtime 请求失败：HTTP ${response.status}`);
 

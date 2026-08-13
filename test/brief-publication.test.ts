@@ -36,14 +36,16 @@ class InMemoryPublicationArchive implements PublicationArchive {
   delayedCandidates: { candidateId: string; detail: string }[] = [];
   published: Parameters<PublicationArchive["publishBrief"]>[0] | null = null;
   publishedDays: string[] = [];
+  requestedLimit: number | undefined;
   stages: { detail?: string; publicationDay: string; stage: string; status: string }[] = [];
 
   constructor(candidates: readonly PublicationCandidate[]) {
     this.candidates = candidates;
   }
 
-  async getCandidatesForPublication() {
-    return this.candidates;
+  async getCandidatesForPublication(limit?: number) {
+    this.requestedLimit = limit;
+    return this.candidates.slice(0, limit);
   }
 
   async markCandidateAssessmentDelayed(input: { candidateId: string; detail: string }) {
@@ -127,6 +129,46 @@ test("固定 Runtime 通过质量门后发布含 Section Citation 与 Provenance
     { publicationDay: "2026-08-12", stage: "publication", status: "started" },
     { publicationDay: "2026-08-12", stage: "publication", status: "succeeded" },
   ]);
+});
+
+test("发布器使用 Profile 指定的评估上限、并发和时间预算", async () => {
+  const archive = new InMemoryPublicationArchive([candidate, candidate]);
+  let active = 0;
+  let maximumActive = 0;
+  const result = await createFixturePublisher({
+    archive,
+    assessmentBudgetMs: 60_000,
+    assessmentConcurrency: 2,
+    clock: () => new Date("2026-08-12T01:00:00.000Z"),
+    createBriefId: () => "brief-concurrent",
+    isCitationAccessible: async () => true,
+    maxAssessments: 2,
+    runtime: {
+      assess: async () => {
+        active += 1;
+        maximumActive = Math.max(maximumActive, active);
+        await new Promise((resolve) => setImmediate(resolve));
+        active -= 1;
+        return validAssessment;
+      },
+      id: "compatible:concurrent-fixture",
+    },
+  }).publishDailyBrief();
+
+  assert.equal(result.status, "published");
+  assert.equal(archive.requestedLimit, 2);
+  assert.equal(maximumActive, 2);
+
+  const exhausted = new InMemoryPublicationArchive([candidate]);
+  const delayed = await createFixturePublisher({
+    archive: exhausted,
+    assessmentBudgetMs: 0,
+    clock: () => new Date("2026-08-12T01:00:00.000Z"),
+    createBriefId: () => "brief-budget-exhausted",
+    isCitationAccessible: async () => true,
+    runtime: runtimeFor(validAssessment),
+  }).publishDailyBrief();
+  assert.deepEqual(delayed, { reason: "openai/codex：本轮评估时间预算已耗尽。", status: "delayed" });
 });
 
 test("日报发布在同一 CST 日期幂等，跨日创建新的不可变 Snapshot", async () => {

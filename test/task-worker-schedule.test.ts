@@ -44,20 +44,19 @@ test("Worker 启动后每两小时采集，并在 CST 09:00 发布后继续安�
 
   await schedule.start();
   assert.deepEqual(events, ["collect"]);
-  assert.deepEqual(fake.intervals.map(({ delay }) => delay), [7_200_000]);
-  assert.deepEqual(fake.timeouts.map(({ delay }) => delay), [1_000]);
+  assert.deepEqual(fake.timeouts.map(({ delay }) => delay), [7_200_000, 1_000]);
 
   now = new Date("2026-08-12T01:00:00.000Z");
-  fake.timeouts[0]?.callback();
+  fake.timeouts[1]?.callback();
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(events, ["collect", "publish"]);
-  assert.deepEqual(fake.timeouts.map(({ delay }) => delay), [1_000, 86_400_000]);
+  assert.deepEqual(fake.timeouts.map(({ delay }) => delay), [7_200_000, 1_000, 86_400_000]);
 
-  fake.intervals[0]?.callback();
+  fake.timeouts[0]?.callback();
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(events, ["collect", "publish", "collect"]);
   schedule.stop();
-  assert.deepEqual(fake.cleared, [1, 3]);
+  assert.deepEqual(fake.cleared, [4, 3]);
 });
 
 test("Worker 重启于 CST 09:00 后会补发当天日报", async () => {
@@ -74,7 +73,7 @@ test("Worker 重启于 CST 09:00 后会补发当天日报", async () => {
   await schedule.start();
 
   assert.deepEqual(events, ["collect", "publish"]);
-  assert.deepEqual(fake.timeouts.map(({ delay }) => delay), [68_400_000]);
+  assert.deepEqual(fake.timeouts.map(({ delay }) => delay), [7_200_000, 68_400_000]);
 });
 
 test("定时任务遇到采集或发布异常会记录错误，并继续安排下一次执行", async () => {
@@ -94,11 +93,50 @@ test("定时任务遇到采集或发布异常会记录错误，并继续安排�
   assert.equal((errors[0] as Error)?.message, "采集网络异常");
 
   now = new Date("2026-08-12T01:00:00.000Z");
+  fake.timeouts[1]?.callback();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(fake.timeouts.map(({ delay }) => delay), [7_200_000, 1_000, 86_400_000]);
+
   fake.timeouts[0]?.callback();
   await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(fake.timeouts.map(({ delay }) => delay), [1_000, 86_400_000]);
-
-  fake.intervals[0]?.callback();
-  await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(errors.map((error) => (error as Error).message), ["采集网络异常", "发布数据库异常", "采集网络异常"]);
+});
+
+test("Worker 在下一 Collection Cycle 读取新的采集间隔", async () => {
+  const fake = createFakeTimers();
+  const intervals = [120_000, 240_000];
+  const schedule = createTaskWorkerSchedule({
+    clock: () => new Date("2026-08-12T00:00:00.000Z"),
+    collectionIntervalMs: 60_000,
+    collect: async () => "succeeded" as const,
+    getCollectionIntervalMs: async () => intervals.shift() ?? 240_000,
+    publish: async () => undefined,
+    timers: fake.timers,
+  });
+
+  await schedule.start();
+  assert.equal(fake.timeouts[0]?.delay, 120_000);
+  fake.timeouts[0]?.callback();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(fake.timeouts[2]?.delay, 240_000);
+});
+
+test("Worker 停止后不会由已完成的发布回调重新登记定时器", async () => {
+  const fake = createFakeTimers();
+  let resolvePublish: (() => void) | undefined;
+  const schedule = createTaskWorkerSchedule({
+    clock: () => new Date("2026-08-12T00:59:59.000Z"),
+    collectionIntervalMs: 60_000,
+    collect: async () => "succeeded" as const,
+    publish: async () => new Promise<void>((resolve) => { resolvePublish = resolve; }),
+    timers: fake.timers,
+  });
+
+  await schedule.start();
+  fake.timeouts[1]?.callback();
+  await new Promise((resolve) => setImmediate(resolve));
+  schedule.stop();
+  resolvePublish?.();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(fake.timeouts.length, 2);
 });

@@ -2,7 +2,7 @@
 set -eu
 
 project_name="razer-raders-e2e"
-postgres_port="5433"
+postgres_port="${RAZER_E2E_POSTGRES_PORT:-5433}"
 web_port="3003"
 database_url="postgresql://razer_raders:local-development-only@127.0.0.1:${postgres_port}/razer_raders"
 web_pid=""

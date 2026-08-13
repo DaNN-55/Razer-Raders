@@ -12,6 +12,8 @@ import { collectHuggingFaceTrending } from "../../src/lib/radar/connectors/huggi
 import { collectOfficialReleaseWatchlist, readOfficialReleaseWatchlist } from "../../src/lib/radar/connectors/official-release-watchlist.ts";
 import { collectShowHn } from "../../src/lib/radar/connectors/show-hn.ts";
 import { createOllamaRuntimeFromEnvironment } from "../../src/lib/radar/ollama-runtime.ts";
+import { getActiveRadarProfile, listRadarProfileVersions, rollbackRadarProfile, saveRadarProfile } from "../../src/lib/radar/profile-archive.ts";
+import { createInitialRadarProfileConfig } from "../../src/lib/radar/radar-profile.ts";
 
 const candidate: PublicationCandidate = {
   canonicalIdentifier: "github:openai/codex",
@@ -253,13 +255,33 @@ function recollectedCandidate(): Candidate {
 
 beforeEach(async () => {
   await getDatabasePool().query(
-    "TRUNCATE TABLE pipeline_runs, radar_signals, brief_snapshots, candidate_source_evidence, source_evidence, radar_candidates, radar_subjects RESTART IDENTITY CASCADE",
+    "TRUNCATE TABLE pipeline_runs, radar_signals, brief_snapshots, candidate_source_evidence, source_evidence, radar_candidates, radar_subjects, radar_profile_state, radar_profile_versions RESTART IDENTITY CASCADE",
   );
   await seedCandidate();
 });
 
 after(async () => {
   await getDatabasePool().end();
+});
+
+test("Radar Profile 在 PostgreSQL 中版本化保存，并允许回滚到已验证的旧版本", { concurrency: false }, async () => {
+  const environment = {
+    RADAR_MODEL_RUNTIME: "ollama",
+    RADAR_OLLAMA_BASE_URL: "http://127.0.0.1:11434",
+    RADAR_OLLAMA_MODEL: "qwen3-local:8b",
+  };
+  const initial = await saveRadarProfile(createInitialRadarProfileConfig(environment), async () => undefined);
+  assert.equal(initial.id, "profile@v1");
+  assert.equal(initial.runtime.model, "qwen3-local:8b");
+
+  const saved = await saveRadarProfile({ ...initial, includeTerms: ["agent"] }, async () => undefined);
+  assert.equal(saved.id, "profile@v2");
+  assert.deepEqual((await getActiveRadarProfile())?.includeTerms, ["agent"]);
+  assert.deepEqual((await listRadarProfileVersions()).map((profile) => profile.id), ["profile@v2", "profile@v1"]);
+
+  const rolledBack = await rollbackRadarProfile(initial.id);
+  assert.equal(rolledBack.id, "profile@v1");
+  assert.deepEqual((await getActiveRadarProfile())?.includeTerms, []);
 });
 
 test("固定 Runtime 经真实 PostgreSQL 按日发布后，API 读取 Snapshot、Provenance 与执行历史", { concurrency: false }, async () => {

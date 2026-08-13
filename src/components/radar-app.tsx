@@ -17,6 +17,7 @@ import {
 } from "@/components/icons";
 import { getAssessmentBanner, getBriefHeading } from "@/components/brief-presentation";
 import { type Signal } from "@/components/radar-data";
+import { ProfileConfig } from "@/components/profile-config";
 import { type RadarBrief, type RadarConnector } from "@/lib/radar/brief";
 
 type View = "brief" | "archive" | "health" | "config";
@@ -415,25 +416,8 @@ function HealthView({ connectors }: { connectors: readonly RadarConnector[] }) {
 }
 
 function ConfigView({ connectors }: { connectors: readonly RadarConnector[] }) {
-  return <section className="config-page">
-    <header className="page-header config-header"><div><p className="eyeline">单一 Radar Profile</p><h1>Radar Profile</h1><p>配置持久化和受限连接测试将在后续管线中接入；当前页面只展示真实的 Connector Health。</p></div><span className="version-select">建设中</span></header>
-    <div className="config-layout">
-      <div className="settings-form">
-        <Fieldset number="01" title="来源连接器">
-          <ConnectorHealth connectors={connectors} />
-        </Fieldset>
-        <Fieldset number="02" title="计划中的 Profile 配置"><p className="config-note">主题过滤、官方 Watchlist、采集频率与发布时刻将在持久化 Profile Configuration 接入后开放编辑。</p></Fieldset>
-        <Fieldset number="03" title="来源凭据"><p className="config-note">密钥只由部署环境提供；当前客户端不会读取、展示或保存任何凭据。</p></Fieldset>
-      </div>
-      <aside className="config-rail">
-        <section className="config-rail-section"><h2>连接器测试</h2><p>尚未接入。连接测试会由 Task Worker 执行并写入 Connector Health，而不会在浏览器中模拟结果。</p></section>
-        <section className="config-rail-section"><h2>配置版本</h2><p>尚未持久化。未来版本会在下一个采集周期生效，并保留历史版本。</p></section>
-      </aside>
-    </div>
-  </section>;
+  return <ProfileConfig connectors={connectors} />;
 }
-
-function Fieldset({ children, number, title }: { children: React.ReactNode; number: string; title: string }) { return <fieldset><legend><span>{number}</span>{title}</legend>{children}</fieldset>; }
 
 function EmptySignals({ assessmentDelay, availability, hasAnySignals, onReset, pendingCandidateCount }: { assessmentDelay?: RadarBrief["assessmentDelay"]; availability: RadarBrief["availability"]; hasAnySignals: boolean; onReset: () => void; pendingCandidateCount: number }) {
   if (!hasAnySignals) {
