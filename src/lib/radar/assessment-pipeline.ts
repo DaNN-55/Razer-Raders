@@ -26,6 +26,7 @@ export type AssessmentPipelineDependencies = {
   candidateFilter?: (candidate: Candidate) => boolean;
   clock: () => Date;
   createRunId: () => string;
+  enqueueCandidate?: (candidate: Candidate) => Promise<void>;
   enrichCandidate?: (candidate: Candidate) => Promise<EvidenceEnrichmentResult>;
   modelRuntime: ModelRuntime;
   sourceConnectors: readonly SourceConnector[];
@@ -40,7 +41,7 @@ function errorMessage(error: unknown) {
 }
 
 export function createAssessmentPipeline(dependencies: AssessmentPipelineDependencies) {
-  const { archive, candidateFilter = () => true, clock, createRunId, enrichCandidate, sourceConnectors } = dependencies;
+  const { archive, candidateFilter = () => true, clock, createRunId, enqueueCandidate, enrichCandidate, sourceConnectors } = dependencies;
   const connectors = new Map(sourceConnectors.map((connector) => [connector.id, connector]));
 
   return {
@@ -69,6 +70,7 @@ export function createAssessmentPipeline(dependencies: AssessmentPipelineDepende
               evidence,
             });
           }
+          if (enqueueCandidate) await enqueueCandidate(candidate);
           if (enrichCandidate) {
             try {
               const enrichment = await enrichCandidate(candidate);

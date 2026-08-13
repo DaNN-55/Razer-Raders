@@ -285,6 +285,23 @@ test("Show HN 精确解析出官方身份后，只将 Candidate 归入对应稳�
   assert.equal(archive.candidates.get("show-hn:42")?.subjectCanonicalIdentifier, "github:openai/codex");
 });
 
+test("采集成功后将 Candidate 交给持久化队列，而不是在 Web 请求中执行任务", async () => {
+  const archive = new InMemoryRadarArchive();
+  const queued: string[] = [];
+  const pipeline = createAssessmentPipeline({
+    archive,
+    clock: () => new Date("2026-08-12T08:00:01.000Z"),
+    createRunId: () => "queue-enqueue-run",
+    enqueueCandidate: async (candidate) => { queued.push(candidate.canonicalIdentifier); },
+    modelRuntime: fixtureRuntime,
+    sourceConnectors: [{ id: "github-trending", collect: async () => collectionResult("2026-08-12T08:00:00.000Z") }],
+  });
+
+  await pipeline.runCollectionCycle("github-trending");
+
+  assert.deepEqual(queued, ["github:openai/codex"]);
+});
+
 test("同一 Radar Subject 的不同 Candidate 分别保留，不会因 Subject 相同而覆盖", async () => {
   const archive = new InMemoryRadarArchive();
   const first = collectionResult("2026-08-12T08:00:00.000Z").candidates[0]!;

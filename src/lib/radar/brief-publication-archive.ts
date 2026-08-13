@@ -1,5 +1,6 @@
 import type { QueryResultRow } from "pg";
-import type { PublicationArchive, PublicationCandidate, PublishedSignalInput } from "./brief-publication.ts";
+import type { PublicationArchive, PublicationCandidate, PublishedSignalInput, ReadyPublicationAssessment } from "./brief-publication.ts";
+import type { GroundedAssessment } from "./assessment-contract.ts";
 import type { BriefProvenance } from "./brief-contract.ts";
 import { getDatabasePool, withTransaction } from "./database.ts";
 
@@ -12,6 +13,12 @@ type CandidateRow = QueryResultRow & {
   selection_reason: string;
   signal_state: PublicationCandidate["signalState"];
   title: string;
+};
+
+type ReadyCandidateRow = CandidateRow & {
+  assessment_result: GroundedAssessment;
+  configuration_version: string;
+  runtime_id: string;
 };
 
 function hasPublicationEvidence(value: CandidateRow): boolean {
@@ -54,6 +61,48 @@ export const postgresBriefPublicationArchive: PublicationArchive = {
       signalState: candidate.signal_state,
       title: candidate.title,
     }));
+  },
+
+  async getReadyAssessments(limit = 10) {
+    const result = await getDatabasePool().query<ReadyCandidateRow>(
+      `SELECT candidate.canonical_identifier, candidate.title, candidate.signal_state, candidate.priority,
+        candidate.ranking_score, candidate.ranking_policy_version, candidate.selection_reason,
+        assessment.configuration_version, assessment.runtime_id, candidate.assessment_result,
+        COALESCE(jsonb_agg(jsonb_build_object(
+          'canonicalIdentifier', digest.canonical_identifier,
+          'excerpts', digest.excerpts,
+          'sourceName', digest.source_name,
+          'sourceTitle', digest.source_title,
+          'sourceUrl', digest.source_url
+        ) ORDER BY digest.id) FILTER (WHERE digest.id IS NOT NULL), '[]'::jsonb) AS evidence
+      FROM radar_candidates candidate
+      JOIN candidate_tasks assessment ON assessment.candidate_id = candidate.id
+        AND assessment.task_kind = 'assessment' AND assessment.status = 'completed'
+        AND assessment.id = candidate.assessment_task_id
+      LEFT JOIN candidate_task_evidence_digests task_digest ON task_digest.task_id = assessment.id
+      LEFT JOIN evidence_digests digest ON digest.id = task_digest.digest_id
+      WHERE candidate.evaluation_status = 'ready'
+        AND candidate.last_collected_at >= NOW() - INTERVAL '7 days'
+      GROUP BY candidate.id, assessment.id
+      ORDER BY candidate.ranking_score DESC, candidate.last_collected_at DESC
+      LIMIT $1`,
+      [limit],
+    );
+    return result.rows.filter(hasPublicationEvidence).map((candidate) => ({
+      assessment: candidate.assessment_result,
+      candidate: {
+        canonicalIdentifier: candidate.canonical_identifier,
+        evidence: candidate.evidence,
+        priority: candidate.priority,
+        rankingPolicyVersion: candidate.ranking_policy_version,
+        rankingScore: candidate.ranking_score,
+        selectionReason: candidate.selection_reason,
+        signalState: candidate.signal_state,
+        title: candidate.title,
+      },
+      configurationVersion: candidate.configuration_version,
+      runtimeId: candidate.runtime_id,
+    } satisfies ReadyPublicationAssessment));
   },
 
   async hasPublishedBrief(publicationDay) {

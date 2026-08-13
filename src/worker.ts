@@ -4,16 +4,17 @@ import { postgresAssessmentPipelineArchive } from "./lib/radar/assessment-pipeli
 import { postgresBriefPublicationArchive } from "./lib/radar/brief-publication-archive.ts";
 import { postgresEvidenceDigestArchive } from "./lib/radar/evidence-digest-archive.ts";
 import { createEvidenceEnricher } from "./lib/radar/evidence-enrichment.ts";
-import { createBriefPublisher } from "./lib/radar/brief-publication.ts";
+import { createReadyBriefPublisher } from "./lib/radar/brief-publication.ts";
 import { createCitationAccessibilityCheck } from "./lib/radar/citation-accessibility.ts";
 import { recordCollectionCycle } from "./lib/radar/collection-stage-recorder.ts";
 import { createDailyPublicationSchedule } from "./lib/radar/daily-publication-schedule.ts";
 import type { ConnectorId } from "./lib/radar/connectors/types.ts";
 import { getDatabasePool } from "./lib/radar/database.ts";
 import { createProfileCandidateFilter, createProfileSourceConnectors } from "./lib/radar/profile-collection.ts";
-import { getRequiredRadarProfile } from "./lib/radar/profile-archive.ts";
+import { getRadarProfile, getRequiredRadarProfile } from "./lib/radar/profile-archive.ts";
 import { createModelRuntimeFromProfile } from "./lib/radar/profile-runtime.ts";
 import { createTaskWorkerSchedule } from "./lib/radar/task-worker-schedule.ts";
+import { createCandidateTaskWorker, postgresCandidateTaskArchive } from "./lib/radar/task-queue.ts";
 
 const defaultCollectionIntervalMs = 2 * 60 * 60 * 1000;
 
@@ -44,48 +45,44 @@ async function collectConfiguredSources() {
     candidateFilter: createProfileCandidateFilter(profile),
     clock: () => new Date(),
     createRunId: randomUUID,
-    enrichCandidate: (candidate) => evidenceEnricher.enrich(candidate, { officialWatchlist: profile.officialWatchlist }),
+    enqueueCandidate: (candidate) => postgresCandidateTaskArchive.enqueueEnrichment({
+      candidate,
+      configurationVersion: profile.id,
+      runtimeId: `${profile.runtime.kind}:${profile.runtime.model}`,
+    }),
     modelRuntime: { id: profile.runtime.kind },
     sourceConnectors,
   });
   const results = await Promise.all(sourceConnectors.map((connector) => collectSourceIntoArchive(connector.id, pipeline)));
+  await createCandidateTaskWorker({
+    archive: postgresCandidateTaskArchive,
+    clock: () => new Date(),
+    concurrency: profile.runtime.modelConcurrency,
+    enrich: async (candidate, configurationVersion) => {
+      const taskProfile = configurationVersion === profile.id || configurationVersion === "legacy" ? profile : await getRadarProfile(configurationVersion);
+      if (!taskProfile) return { candidateCanonicalIdentifier: candidate.canonicalIdentifier, errorMessage: "任务 Profile 已不存在。", digests: [], status: "failed" };
+      return evidenceEnricher.enrich(candidate, { officialWatchlist: taskProfile.officialWatchlist });
+    },
+    maxTasks: profile.runtime.maxAssessmentsPerCycle,
+    getRuntime: async (configurationVersion) => {
+      const taskProfile = configurationVersion === profile.id || configurationVersion === "legacy" ? profile : await getRadarProfile(configurationVersion);
+      return taskProfile ? createModelRuntimeFromProfile(taskProfile) : null;
+    },
+    timeBudgetMs: profile.runtime.cycleBudgetSeconds * 1_000,
+    workerId: randomUUID(),
+  }).runCycle();
   return results.some((result) => result.status === "succeeded") ? "succeeded" as const : "failed" as const;
 }
 
 async function publishDailyBriefIfConfigured() {
   const profile = await getRequiredRadarProfile();
-  const runtime = createModelRuntimeFromProfile(profile);
-  const runtimeName = profile.runtime.kind;
-  if (!runtime) {
-    const detail = `${runtimeName} Runtime 未配置或不受支持。`;
-    console.log(`${detail} 跳过当日日报发布。`);
-    const dueDay = createDailyPublicationSchedule(() => new Date()).getDuePublicationDay();
-    if (dueDay) {
-      await postgresBriefPublicationArchive.recordPipelineStage({
-        detail,
-        publicationDay: dueDay,
-        stage: "assessment",
-        status: "failed",
-      });
-    }
-    return { reason: detail, status: "rejected" as const };
-  }
-
-  const candidates = await postgresBriefPublicationArchive.getCandidatesForPublication(profile.runtime.maxAssessmentsPerCycle);
-  const isCitationAccessible = createCitationAccessibilityCheck(
-    candidates.flatMap((candidate) => candidate.evidence.map((evidence) => evidence.sourceUrl)),
-  );
-  const result = await createBriefPublisher({
+  const result = await createReadyBriefPublisher({
     archive: postgresBriefPublicationArchive,
-    assessmentBudgetMs: profile.runtime.cycleBudgetSeconds * 1_000,
-    assessmentConcurrency: profile.runtime.modelConcurrency,
     clock: () => new Date(),
-    configurationVersion: profile.id,
     createBriefId: randomUUID,
-    isCitationAccessible,
+    isCitationAccessible: (url) => createCitationAccessibilityCheck([url])(url),
     maxAssessments: profile.runtime.maxAssessmentsPerCycle,
     pipelineVersion: process.env.RADAR_PIPELINE_VERSION ?? "assessment-pipeline@v1",
-    runtime,
   }).publishDailyBrief();
   if (result.status === "published") console.log(`日报已发布：${result.signalCount} 个信号`);
   if (result.status === "delayed") console.error(`日报评估延迟：${result.reason}`);

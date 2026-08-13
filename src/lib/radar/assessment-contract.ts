@@ -1,5 +1,6 @@
 export type AssessmentEvidence = {
   canonicalIdentifier: string;
+  excerpts?: readonly string[];
   sourceName: string;
   sourceTitle: string;
   sourceUrl: string;

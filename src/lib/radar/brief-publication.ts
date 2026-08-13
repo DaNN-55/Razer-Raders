@@ -45,10 +45,18 @@ type PublishBriefInput = {
 
 export type PublicationArchive = {
   getCandidatesForPublication: (limit?: number) => Promise<readonly PublicationCandidate[]>;
+  getReadyAssessments?: (limit?: number) => Promise<readonly ReadyPublicationAssessment[]>;
   hasPublishedBrief: (publicationDay: string) => Promise<boolean>;
   markCandidateAssessmentDelayed: (input: { candidateId: string; detail: string }) => Promise<void>;
   publishBrief: (input: PublishBriefInput) => Promise<"already-published" | "published">;
   recordPipelineStage: (input: { collectionRunId?: string; detail?: string; publicationDay: string; stage: PipelineStage; status: PipelineStageStatus }) => Promise<void>;
+};
+
+export type ReadyPublicationAssessment = {
+  assessment: GroundedAssessment;
+  candidate: PublicationCandidate;
+  configurationVersion: string;
+  runtimeId: string;
 };
 
 export type PublicationResult =
@@ -71,7 +79,7 @@ function containsChinese(value: string) {
   return /\p{Script=Han}/u.test(value);
 }
 
-function validateAssessment(candidate: PublicationCandidate, assessment: GroundedAssessment): string | null {
+export function validateAssessment(candidate: PublicationCandidate, assessment: GroundedAssessment): string | null {
   if (!assessment || typeof assessment !== "object" || !assessment.citations || typeof assessment.citations !== "object") return "评估结构无效。";
   const requiredText = [
     ["summary", assessment.summary],
@@ -102,7 +110,7 @@ function validateAssessment(candidate: PublicationCandidate, assessment: Grounde
   return null;
 }
 
-function toPublishedSignal(candidate: PublicationCandidate, assessment: GroundedAssessment): PublishedSignalInput {
+export function toPublishedSignal(candidate: PublicationCandidate, assessment: GroundedAssessment): PublishedSignalInput {
   return {
     builderValue: assessment.builderValue,
     candidateId: candidate.canonicalIdentifier,
@@ -119,6 +127,51 @@ function toPublishedSignal(candidate: PublicationCandidate, assessment: Grounded
     title: candidate.title,
     topics: assessment.topics,
     whyNow: assessment.whyNow,
+  };
+}
+
+export function createReadyBriefPublisher(input: {
+  archive: PublicationArchive;
+  clock: () => Date;
+  createBriefId: () => string;
+  isCitationAccessible: CitationAccessibility;
+  maxAssessments?: number;
+  pipelineVersion: string;
+}) {
+  const { archive, clock, createBriefId, isCitationAccessible, pipelineVersion } = input;
+  const maxAssessments = input.maxAssessments ?? 10;
+  return {
+    async publishDailyBrief(): Promise<PublicationResult> {
+      const publishedAt = clock();
+      const publicationDay = getCstDay(publishedAt);
+      if (await archive.hasPublishedBrief(publicationDay)) return { status: "already-published" };
+      const ready = await archive.getReadyAssessments?.(maxAssessments) ?? [];
+      if (!ready.length) return { reason: "Observation Window 内没有已评估待发布的 Candidate。", status: "rejected" };
+      const first = ready[0]!;
+      const publishable = ready.filter((item) => item.configurationVersion === first.configurationVersion
+        && item.runtimeId === first.runtimeId
+        && item.candidate.rankingPolicyVersion === first.candidate.rankingPolicyVersion);
+      const signals: PublishedSignalInput[] = [];
+      for (const { assessment, candidate } of publishable) {
+        const validationError = validateAssessment(candidate, assessment);
+        if (validationError) return { reason: `${candidate.title}：${validationError}`, status: "rejected" };
+        for (const section of citationSections) {
+          for (const citation of assessment.citations[section]) {
+            if (!await isCitationAccessible(citation)) return { reason: `引用链接不可访问：${citation}`, status: "rejected" };
+          }
+        }
+        signals.push(toPublishedSignal(candidate, assessment));
+      }
+      const id = createBriefId();
+      const published = await archive.publishBrief({
+        id,
+        provenance: { configurationVersion: first.configurationVersion, modelRuntimeId: first.runtimeId, pipelineVersion, rankingPolicyVersion: first.candidate.rankingPolicyVersion },
+        publicationDay,
+        publishedAt: publishedAt.toISOString(),
+        signals,
+      });
+      return published === "already-published" ? { status: "already-published" } : { briefId: id, signalCount: signals.length, status: "published" };
+    },
   };
 }
 

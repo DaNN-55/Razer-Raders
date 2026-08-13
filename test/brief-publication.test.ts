@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { GroundedAssessment, ModelRuntime } from "../src/lib/radar/assessment-contract.ts";
-import { createBriefPublisher, type PublicationArchive, type PublicationCandidate } from "../src/lib/radar/brief-publication.ts";
+import { createBriefPublisher, createReadyBriefPublisher, type PublicationArchive, type PublicationCandidate, type ReadyPublicationAssessment } from "../src/lib/radar/brief-publication.ts";
 import { createArchiveRadarBrief } from "../src/lib/radar/brief-contract.ts";
 
 const candidate: PublicationCandidate = {
@@ -33,6 +33,7 @@ const validAssessment: GroundedAssessment = {
 
 class InMemoryPublicationArchive implements PublicationArchive {
   private readonly candidates: readonly PublicationCandidate[];
+  readyAssessments: readonly ReadyPublicationAssessment[] = [];
   delayedCandidates: { candidateId: string; detail: string }[] = [];
   published: Parameters<PublicationArchive["publishBrief"]>[0] | null = null;
   publishedDays: string[] = [];
@@ -46,6 +47,11 @@ class InMemoryPublicationArchive implements PublicationArchive {
   async getCandidatesForPublication(limit?: number) {
     this.requestedLimit = limit;
     return this.candidates.slice(0, limit);
+  }
+
+  async getReadyAssessments(limit?: number) {
+    this.requestedLimit = limit;
+    return this.readyAssessments.slice(0, limit);
   }
 
   async markCandidateAssessmentDelayed(input: { candidateId: string; detail: string }) {
@@ -129,6 +135,28 @@ test("固定 Runtime 通过质量门后发布含 Section Citation 与 Provenance
     { publicationDay: "2026-08-12", stage: "publication", status: "started" },
     { publicationDay: "2026-08-12", stage: "publication", status: "succeeded" },
   ]);
+});
+
+test("日报只消费持久化完成的评估，不会再次调用模型", async () => {
+  const archive = new InMemoryPublicationArchive([]);
+  archive.readyAssessments = [{
+    assessment: validAssessment,
+    candidate,
+    configurationVersion: "profile@v1",
+    runtimeId: "compatible:fixture",
+  }];
+  const result = await createReadyBriefPublisher({
+    archive,
+    clock: () => new Date("2026-08-12T01:00:00.000Z"),
+    createBriefId: () => "ready-brief",
+    isCitationAccessible: async () => true,
+    maxAssessments: 1,
+    pipelineVersion: "assessment-pipeline@v1",
+  }).publishDailyBrief();
+
+  assert.deepEqual(result, { briefId: "ready-brief", signalCount: 1, status: "published" });
+  assert.equal(archive.requestedLimit, 1);
+  assert.equal(archive.published?.provenance.modelRuntimeId, "compatible:fixture");
 });
 
 test("发布器使用 Profile 指定的评估上限、并发和时间预算", async () => {

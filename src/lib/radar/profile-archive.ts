@@ -43,6 +43,15 @@ export async function getRequiredRadarProfile(): Promise<RadarProfile> {
   return profile;
 }
 
+export async function getRadarProfile(id: string): Promise<RadarProfile | null> {
+  const result = await getDatabasePool().query<ProfileRow>(
+    "SELECT id, version, configuration FROM radar_profile_versions WHERE id = $1",
+    [id],
+  );
+  const row = result.rows[0];
+  return row ? toProfile(row) : null;
+}
+
 export function getInitialRadarProfileDraft(environment: RadarProfileEnvironment = process.env as RadarProfileEnvironment): RadarProfileConfig {
   return createInitialRadarProfileConfig(environment);
 }
