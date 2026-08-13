@@ -154,6 +154,24 @@ test("已完成的队列评估可作为日报的唯一发布输入", { concurren
   assert.deepEqual(ready?.[0]?.candidate.evidence.map((evidence) => evidence.sourceUrl), [digest.sourceUrl]);
 });
 
+test("模型明确跳过时持久化为已评估未入选", { concurrency: false }, async () => {
+  const input = candidate("github:openai/skip");
+  await seed(input);
+  const digest = await attachDigest(input.canonicalIdentifier);
+  await postgresCandidateTaskArchive.enqueueEnrichment({ candidate: input, configurationVersion: "profile@v1", runtimeId: "ollama:qwen3" });
+  const enrichment = await postgresCandidateTaskArchive.claimNext({ leaseMs: 1_000, now, workerId: "worker-a" });
+  if (!enrichment) throw new Error("Fixture 缺少补证任务。");
+  await postgresCandidateTaskArchive.completeEnrichment({ result: { candidateCanonicalIdentifier: input.canonicalIdentifier, digests: [digest], status: "enriched" }, task: enrichment });
+  const assessmentTask = await postgresCandidateTaskArchive.claimNext({ leaseMs: 1_000, now: new Date(now.getTime() + 1), workerId: "worker-b" });
+  if (!assessmentTask) throw new Error("Fixture 缺少评估任务。");
+  await postgresCandidateTaskArchive.completeAssessment({
+    assessment: { builderValue: "跳过", citations: { happened: [digest.sourceUrl], technicalBasis: [digest.sourceUrl], whyNow: [digest.sourceUrl] }, happened: "无可发布变化。", productOpportunity: "无", risk: "不适用。", summary: "不建议纳入。", technicalBasis: "证据不足以支持产品判断。", topics: ["开发工具"], whyNow: "当前窗口内复核。" },
+    task: assessmentTask,
+  });
+  const state = await getDatabasePool().query<{ evaluation_status: string; lifecycle_status: string }>("SELECT lifecycle_status, evaluation_status FROM radar_candidates WHERE id = $1", [input.canonicalIdentifier]);
+  assert.deepEqual(state.rows, [{ evaluation_status: "not-selected", lifecycle_status: "已评估未入选" }]);
+});
+
 test("租约过期后旧 Worker 的完成写入不会覆盖新 Worker 的租约", { concurrency: false }, async () => {
   const input = candidate("github:openai/stale-worker");
   await seed(input);

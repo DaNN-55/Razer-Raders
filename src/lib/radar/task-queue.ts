@@ -296,11 +296,12 @@ export const postgresCandidateTaskArchive: CandidateTaskArchive = {
         [task.id, task.workerId, task.claimedAt],
       );
       if (!completedTask.rowCount) return;
+      const selectedForPublication = assessment.builderValue !== "跳过";
       await client.query(
         `UPDATE radar_candidates
-        SET lifecycle_status = '已评估待发布', evaluation_status = 'ready', assessment_result = $2, assessment_fingerprint = $3, assessment_task_id = $4, updated_at = NOW()
+        SET lifecycle_status = $2, evaluation_status = $3, assessment_result = $4, assessment_fingerprint = $5, assessment_task_id = $6, updated_at = NOW()
         WHERE id = $1`,
-        [task.candidate.canonicalIdentifier, JSON.stringify(assessment), task.evidenceFingerprint, task.id],
+        [task.candidate.canonicalIdentifier, selectedForPublication ? "已评估待发布" : "已评估未入选", selectedForPublication ? "ready" : "not-selected", JSON.stringify(assessment), task.evidenceFingerprint, task.id],
       );
     });
   },
