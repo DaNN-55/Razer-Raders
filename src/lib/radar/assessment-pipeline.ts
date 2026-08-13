@@ -1,4 +1,5 @@
 import type { Candidate, CollectionResult, ConnectorId, SourceEvidence } from "./connectors/types.ts";
+import type { EvidenceEnrichmentResult } from "./evidence-enrichment.ts";
 
 export type ModelRuntime = {
   id: string;
@@ -13,6 +14,7 @@ export type AssessmentPipelineArchive = {
   failCollectionRun: (input: { errorMessage: string; finishedAt: string; runId: string }) => Promise<void>;
   markConnectorFailed: (input: { connectorId: ConnectorId; detail: string }) => Promise<void>;
   markConnectorFresh: (input: { collectedAt: string; connectorId: ConnectorId; detail?: string }) => Promise<void>;
+  resolveCandidateSubject: (input: { candidateId: string; signalType: Candidate["signalType"]; subjectCanonicalIdentifier: string; title: string }) => Promise<void>;
   startCollectionRun: (input: { connectorId: ConnectorId; runId: string; startedAt: string }) => Promise<void>;
   succeedCollectionRun: (input: { candidateCount: number; finishedAt: string; runId: string }) => Promise<void>;
   upsertCandidate: (candidate: Candidate) => Promise<{ id: string }>;
@@ -24,12 +26,13 @@ export type AssessmentPipelineDependencies = {
   candidateFilter?: (candidate: Candidate) => boolean;
   clock: () => Date;
   createRunId: () => string;
+  enrichCandidate?: (candidate: Candidate) => Promise<EvidenceEnrichmentResult>;
   modelRuntime: ModelRuntime;
   sourceConnectors: readonly SourceConnector[];
 };
 
 export type CollectionCycleResult =
-  | { candidateCount: number; connectorId: ConnectorId; runId: string; status: "succeeded"; warnings?: readonly string[] }
+  | { candidateCount: number; connectorId: ConnectorId; enrichmentResults?: readonly EvidenceEnrichmentResult[]; runId: string; status: "succeeded"; warnings?: readonly string[] }
   | { connectorId: ConnectorId; errorMessage: string; runId: string; status: "failed" };
 
 function errorMessage(error: unknown) {
@@ -37,7 +40,7 @@ function errorMessage(error: unknown) {
 }
 
 export function createAssessmentPipeline(dependencies: AssessmentPipelineDependencies) {
-  const { archive, candidateFilter = () => true, clock, createRunId, sourceConnectors } = dependencies;
+  const { archive, candidateFilter = () => true, clock, createRunId, enrichCandidate, sourceConnectors } = dependencies;
   const connectors = new Map(sourceConnectors.map((connector) => [connector.id, connector]));
 
   return {
@@ -55,6 +58,7 @@ export function createAssessmentPipeline(dependencies: AssessmentPipelineDepende
         }
 
         const retainedCandidates = collection.candidates.filter(candidateFilter);
+        const enrichmentResults: EvidenceEnrichmentResult[] = [];
         for (const candidate of retainedCandidates) {
           const storedCandidate = await archive.upsertCandidate(candidate);
 
@@ -64,6 +68,27 @@ export function createAssessmentPipeline(dependencies: AssessmentPipelineDepende
               candidateId: storedCandidate.id,
               evidence,
             });
+          }
+          if (enrichCandidate) {
+            try {
+              const enrichment = await enrichCandidate(candidate);
+              enrichmentResults.push(enrichment);
+              if (enrichment.resolvedCanonicalIdentifier && enrichment.resolvedCanonicalIdentifier !== candidate.subjectCanonicalIdentifier) {
+                await archive.resolveCandidateSubject({
+                  candidateId: storedCandidate.id,
+                  signalType: candidate.signalType,
+                  subjectCanonicalIdentifier: enrichment.resolvedCanonicalIdentifier,
+                  title: candidate.title,
+                });
+              }
+            } catch (error) {
+              enrichmentResults.push({
+                candidateCanonicalIdentifier: candidate.canonicalIdentifier,
+                digests: [],
+                errorMessage: errorMessage(error),
+                status: "failed",
+              });
+            }
           }
         }
 
@@ -79,7 +104,14 @@ export function createAssessmentPipeline(dependencies: AssessmentPipelineDepende
           ...(warnings ? { detail: warnings.join("；") } : {}),
         });
 
-        return { candidateCount: retainedCandidates.length, connectorId, runId, status: "succeeded", ...(warnings ? { warnings } : {}) };
+        return {
+          candidateCount: retainedCandidates.length,
+          connectorId,
+          runId,
+          status: "succeeded",
+          ...(enrichmentResults.length > 0 ? { enrichmentResults } : {}),
+          ...(warnings ? { warnings } : {}),
+        };
       } catch (error) {
         const message = errorMessage(error);
         await archive.failCollectionRun({ errorMessage: message, finishedAt: clock().toISOString(), runId });

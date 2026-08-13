@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { createAssessmentPipeline } from "./lib/radar/assessment-pipeline.ts";
 import { postgresAssessmentPipelineArchive } from "./lib/radar/assessment-pipeline-archive.ts";
 import { postgresBriefPublicationArchive } from "./lib/radar/brief-publication-archive.ts";
+import { postgresEvidenceDigestArchive } from "./lib/radar/evidence-digest-archive.ts";
+import { createEvidenceEnricher } from "./lib/radar/evidence-enrichment.ts";
 import { createBriefPublisher } from "./lib/radar/brief-publication.ts";
 import { createCitationAccessibilityCheck } from "./lib/radar/citation-accessibility.ts";
 import { recordCollectionCycle } from "./lib/radar/collection-stage-recorder.ts";
@@ -33,11 +35,16 @@ async function collectSourceIntoArchive(connectorId: ConnectorId, pipeline: Retu
 async function collectConfiguredSources() {
   const profile = await getRequiredRadarProfile();
   const sourceConnectors = createProfileSourceConnectors(profile);
+  const evidenceEnricher = createEvidenceEnricher({
+    archive: postgresEvidenceDigestArchive,
+    clock: () => new Date(),
+  });
   const pipeline = createAssessmentPipeline({
     archive: postgresAssessmentPipelineArchive,
     candidateFilter: createProfileCandidateFilter(profile),
     clock: () => new Date(),
     createRunId: randomUUID,
+    enrichCandidate: (candidate) => evidenceEnricher.enrich(candidate, { officialWatchlist: profile.officialWatchlist }),
     modelRuntime: { id: profile.runtime.kind },
     sourceConnectors,
   });

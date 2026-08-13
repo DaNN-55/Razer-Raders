@@ -255,7 +255,7 @@ function recollectedCandidate(): Candidate {
 
 beforeEach(async () => {
   await getDatabasePool().query(
-    "TRUNCATE TABLE pipeline_runs, radar_signals, brief_snapshots, candidate_source_evidence, source_evidence, radar_candidates, radar_subjects, radar_profile_state, radar_profile_versions RESTART IDENTITY CASCADE",
+    "TRUNCATE TABLE pipeline_runs, radar_signals, brief_snapshots, candidate_evidence_digests, evidence_digests, candidate_source_evidence, source_evidence, radar_candidates, radar_subjects, radar_profile_state, radar_profile_versions RESTART IDENTITY CASCADE",
   );
   await seedCandidate();
 });

@@ -45,6 +45,12 @@ class InMemoryRadarArchive implements AssessmentPipelineArchive {
     });
   }
 
+  async resolveCandidateSubject(input: { candidateId: string; signalType: Candidate["signalType"]; subjectCanonicalIdentifier: string; title: string }) {
+    const candidate = this.candidates.get(input.candidateId);
+    if (!candidate) throw new Error("找不到 Candidate。");
+    this.candidates.set(input.candidateId, { ...candidate, subjectCanonicalIdentifier: input.subjectCanonicalIdentifier });
+  }
+
   async startCollectionRun(input: { connectorId: string; runId: string; startedAt: string }) {
     this.runs.set(input.runId, { candidateCount: 0, connectorId: input.connectorId, id: input.runId, startedAt: input.startedAt, status: "running" });
   }
@@ -211,6 +217,72 @@ test("Canonical Identifier 不一致的 Source Evidence 保留为关联证据，
     candidateId: "github:openai/codex",
     evidence: relatedEvidence,
   }]);
+});
+
+test("采集后交付可入队的补证结果，补证失败不回滚已归档的 Discovery Evidence", async () => {
+  const archive = new InMemoryRadarArchive();
+  const pipeline = createAssessmentPipeline({
+    archive,
+    clock: () => new Date("2026-08-12T08:00:01.000Z"),
+    createRunId: () => "enrichment-result-run",
+    enrichCandidate: async () => ({
+      candidateCanonicalIdentifier: "github:openai/codex",
+      digests: [],
+      errorMessage: "HTTP 503",
+      status: "failed",
+    }),
+    modelRuntime: fixtureRuntime,
+    sourceConnectors: [{ id: "github-trending", collect: async () => collectionResult("2026-08-12T08:00:00.000Z") }],
+  });
+
+  const result = await pipeline.runCollectionCycle("github-trending");
+
+  assert.equal(result.status, "succeeded");
+  if (result.status !== "succeeded") throw new Error("Fixture 采集不应失败。");
+  assert.deepEqual(result.enrichmentResults, [{
+    candidateCanonicalIdentifier: "github:openai/codex",
+    digests: [],
+    errorMessage: "HTTP 503",
+    status: "failed",
+  }]);
+  assert.equal(archive.candidates.size, 1);
+  assert.equal(archive.evidence.size, 1);
+});
+
+test("Show HN 精确解析出官方身份后，只将 Candidate 归入对应稳定 Radar Subject", async () => {
+  const archive = new InMemoryRadarArchive();
+  const showHnCandidate: Candidate = {
+    ...collectionResult("2026-08-12T08:00:00.000Z").candidates[0]!,
+    canonicalIdentifier: "show-hn:42",
+    connectorId: "show-hn",
+    subjectCanonicalIdentifier: "show-hn:42",
+  };
+  const pipeline = createAssessmentPipeline({
+    archive,
+    clock: () => new Date("2026-08-12T08:00:01.000Z"),
+    createRunId: () => "resolved-show-hn-run",
+    enrichCandidate: async () => ({
+      candidateCanonicalIdentifier: showHnCandidate.canonicalIdentifier,
+      digests: [],
+      resolvedCanonicalIdentifier: "github:openai/codex",
+      status: "enriched",
+    }),
+    modelRuntime: fixtureRuntime,
+    sourceConnectors: [{
+      id: "show-hn",
+      collect: async () => ({
+        candidates: [showHnCandidate],
+        collectedAt: showHnCandidate.collectedAt,
+        connectorId: "show-hn",
+        connectorVersion: "show-hn@fixture",
+        warnings: [],
+      }),
+    }],
+  });
+
+  await pipeline.runCollectionCycle("show-hn");
+
+  assert.equal(archive.candidates.get("show-hn:42")?.subjectCanonicalIdentifier, "github:openai/codex");
 });
 
 test("同一 Radar Subject 的不同 Candidate 分别保留，不会因 Subject 相同而覆盖", async () => {

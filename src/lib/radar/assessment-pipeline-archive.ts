@@ -35,6 +35,25 @@ export const postgresAssessmentPipelineArchive: AssessmentPipelineArchive = {
     });
   },
 
+  async resolveCandidateSubject({ candidateId, signalType, subjectCanonicalIdentifier, title }) {
+    const subjectId = `subject:${subjectCanonicalIdentifier}`;
+    await withTransaction(async (client) => {
+      await client.query(
+        `INSERT INTO radar_subjects (id, canonical_identifier, title, signal_type)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT (canonical_identifier)
+        DO UPDATE SET updated_at = NOW()`,
+        [subjectId, subjectCanonicalIdentifier, title, signalType],
+      );
+      await client.query(
+        `UPDATE radar_candidates
+        SET subject_id = $2, subject_canonical_identifier = $3, updated_at = NOW()
+        WHERE id = $1`,
+        [candidateId, subjectId, subjectCanonicalIdentifier],
+      );
+    });
+  },
+
   async startCollectionRun({ connectorId, runId, startedAt }) {
     await getDatabasePool().query(
       "INSERT INTO collection_runs (id, connector_id, started_at, status) VALUES ($1, $2, $3, 'running')",
