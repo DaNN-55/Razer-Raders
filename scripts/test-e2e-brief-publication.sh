@@ -46,3 +46,4 @@ until curl --fail --silent "http://127.0.0.1:${web_port}/api/brief" >/dev/null 2
 done
 
 DATABASE_URL="$database_url" RADAR_E2E_BASE_URL="http://127.0.0.1:${web_port}" node --experimental-strip-types --test --test-concurrency=1 test/e2e/*.test.ts
+DATABASE_URL="$database_url" RADAR_E2E_BASE_URL="http://127.0.0.1:${web_port}" pnpm test:e2e:browser

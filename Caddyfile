@@ -1,0 +1,3 @@
+{$RAZER_PUBLIC_HOSTNAME} {
+	reverse_proxy web:3000
+}

@@ -1,0 +1,24 @@
+services:
+  web:
+    ports: !reset []
+    expose:
+      - "3000"
+
+  caddy:
+    image: caddy:2.10-alpine
+    depends_on:
+      web:
+        condition: service_started
+    environment:
+      RAZER_PUBLIC_HOSTNAME: ${RAZER_PUBLIC_HOSTNAME:?Set RAZER_PUBLIC_HOSTNAME to the public DNS name.}
+    ports:
+      - "${RAZER_HTTP_BIND_ADDRESS:-0.0.0.0}:${RAZER_HTTP_PORT:-80}:80"
+      - "${RAZER_HTTPS_BIND_ADDRESS:-0.0.0.0}:${RAZER_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - radar-caddy-data:/data
+      - radar-caddy-config:/config
+
+volumes:
+  radar-caddy-data:
+  radar-caddy-config:

@@ -11,11 +11,13 @@
     "lint": "eslint .",
     "test": "node --experimental-strip-types --test test/*.test.ts",
     "test:e2e": "./scripts/test-e2e-brief-publication.sh",
+    "test:e2e:browser": "playwright test",
     "db:migrate": "node --experimental-strip-types src/db/migrate.ts",
     "worker": "node --experimental-strip-types src/worker.ts",
     "worker:once": "RADAR_WORKER_ONCE=true node --experimental-strip-types src/worker.ts",
     "stack:up": "docker compose -p razer-raders-live -f compose.yaml -f compose.live.yaml up -d --no-build",
-    "stack:refresh": "docker build -t razer-raders-live-app:latest . && docker compose -p razer-raders-live -f compose.yaml -f compose.live.yaml up -d --no-build --force-recreate migrate web worker"
+    "stack:refresh": "docker build -t razer-raders-live-app:latest . && docker compose -p razer-raders-live -f compose.yaml -f compose.live.yaml up -d --no-build --force-recreate migrate web worker",
+    "stack:https": "docker compose -f compose.yaml -f compose.https.yaml up -d --build"
   },
   "dependencies": {
     "next": "latest",
@@ -24,6 +26,7 @@
     "react-dom": "latest"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@types/node": "latest",
     "@types/pg": "8.21.0",
     "@types/react": "latest",
