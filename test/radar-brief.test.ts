@@ -110,13 +110,12 @@ test("Daily Brief 依据 Pipeline Provenance 标示新版或旧版评估格式",
   assert.equal(getBriefFormatLabel("assessment-pipeline@v1"), "旧版评估格式");
 });
 
-test("Signal Card 以一句话判断开头，并将入选原因弱化为最后一段", () => {
+test("Signal Card 不重复顶部简介，并将入选原因弱化为最后一段", () => {
   const signal = signals[0];
   if (!signal) throw new Error("Fixture 缺少已发布 Radar Signal。");
   const sections = getSignalCardSections({ ...signal, whyInBrief: "Builder 价值为“试用”；2 条 Primary Evidence；3 个发现来源。" });
 
-  assert.deepEqual(sections.map((section) => section.title), ["一句话判断", "发生了什么", "为什么值得关注", "它靠什么实现", "风险与未知", "为什么它进入今日简报"]);
-  assert.equal(sections[0].body, signal.summary);
-  assert.equal(sections[5].isSelectionReason, true);
-  assert.equal(sections[5].body, "Builder 价值为“试用”；2 条 Primary Evidence；3 个发现来源。");
+  assert.deepEqual(sections.map((section) => section.title), ["发生了什么", "为什么值得关注", "它靠什么实现", "风险与未知", "为什么它进入今日简报"]);
+  assert.equal(sections[4].isSelectionReason, true);
+  assert.equal(sections[4].body, "Builder 价值为“试用”；2 条 Primary Evidence；3 个发现来源。");
 });

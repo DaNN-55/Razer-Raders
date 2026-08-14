@@ -309,7 +309,7 @@ function BriefView({
 
       <aside className="utility-rail">
         <section className="utility-section">
-          <div className="rail-title"><span>来源健康</span><small>更新于 8 分钟前</small></div>
+          <div className="rail-title"><span>来源健康</span><small>最近一轮采集</small></div>
           <ConnectorHealth connectors={connectors} compact />
         </section>
         <section className="utility-section today-note">
@@ -418,11 +418,11 @@ function ArchiveView({ onSelect, saved, signals, topicOptions }: { onSelect: (id
 function HealthView({ connectors }: { connectors: readonly RadarConnector[] }) {
   const unavailable = connectors.filter((connector) => connector.status !== "新鲜");
 
-  return <section className="simple-page health-page">
+  return <><section className="simple-page health-page">
     <header className="page-header"><p className="eyeline">Connector Health · 实例状态</p><h1>每一面雷达，都应说明新鲜度</h1><p>来源不可用时仍可发布简报，但会明确显示采集状态与最近成功时间。</p></header>
     <ConnectorHealth connectors={connectors} />
     <section className="health-note"><h2>当前状态说明</h2><p>{unavailable.length ? `尚未就绪的来源：${unavailable.map(({ name, status }) => `${name}（${status}）`).join("、")}。这些来源不会被当作已完整扫描。` : "所有已配置来源均已完成最近一次采集。"}</p></section>
-  </section>;
+  </section><ProfileConfig connectors={connectors} mode="sources" /></>;
 }
 
 function ConfigView({ connectors }: { connectors: readonly RadarConnector[] }) {
