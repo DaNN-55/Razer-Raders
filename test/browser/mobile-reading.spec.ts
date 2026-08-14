@@ -42,7 +42,7 @@ function runtime(): ModelRuntime {
       risk: "仍需在真实工作流中验证。",
       summary: `${candidate.title} 适合移动端验收。`,
       technicalBasis: "公开仓库提供可验证的实现依据。",
-      topics: ["开发工具"],
+      topics: [candidate.title.endsWith("two") ? "研究" : "开发工具"],
       whyNow: "当前 Observation Window 内出现新的可验证证据。",
     }) satisfies GroundedAssessment,
     id: "compatible:mobile-browser-e2e",
@@ -84,7 +84,52 @@ test("Builder 能在 390px Public Brief 中切换并展开 Signal Card", async (
   await mobileNavigation.locator("button").nth(0).click();
   await expect(page.getByRole("button", { name: /openai\/mobile-brief-one/ })).toBeVisible();
 
+  await mobileNavigation.locator("button").nth(2).click();
+  await expect(page.getByRole("heading", { name: "Radar Profile" })).toBeVisible();
+
+  await mobileNavigation.locator("button").nth(0).click();
+  await expect(page.getByRole("button", { name: /openai\/mobile-brief-one/ })).toBeVisible();
+
   await page.getByRole("button", { name: /openai\/mobile-brief-two/ }).click();
 
   await expect(page.getByText("openai/mobile-brief-two 已发布到移动阅读验收 Fixture。")).toBeVisible();
+});
+
+test("Builder 在紧凑视口可通过键盘应用并关闭 Topic Filter", async ({ page }) => {
+  for (const width of [320, 390, 768, 1024]) {
+    await page.setViewportSize({ height: 844, width });
+    await page.goto("/");
+    await page.waitForTimeout(500);
+
+    await expect(page.getByRole("navigation", { name: "移动端主导航" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "打开筛选条件" })).toBeVisible();
+  }
+
+  await page.setViewportSize({ height: 844, width: 390 });
+  await page.goto("/");
+  await page.waitForTimeout(500);
+  const filterTrigger = page.getByRole("button", { name: "打开筛选条件" });
+  await filterTrigger.click();
+
+  const filterDrawer = page.getByRole("dialog", { name: "主题筛选" });
+  await expect(filterDrawer).toBeVisible();
+  await expect(page.getByRole("button", { name: "点击遮罩关闭主题筛选" })).toBeVisible();
+  await expect(filterDrawer.getByRole("button", { name: "关闭主题筛选" })).toBeFocused();
+
+  await page.keyboard.press("Tab");
+  const topicFilter = page.getByRole("combobox", { name: "主题" });
+  await expect(topicFilter).toBeFocused();
+  for (let index = 0; index < 6; index += 1) await page.keyboard.press("ArrowDown");
+  await expect(topicFilter).toHaveValue("研究");
+  await expect(page.getByRole("button", { name: /openai\/mobile-brief-two/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /openai\/mobile-brief-one/ })).toBeHidden();
+
+  await page.keyboard.press("Escape");
+  await expect(filterDrawer).toBeHidden();
+  await expect(filterTrigger).toBeFocused();
+
+  await filterTrigger.click();
+  await expect(filterDrawer).toBeVisible();
+  await page.setViewportSize({ height: 844, width: 1121 });
+  await expect(filterDrawer).toBeHidden();
 });

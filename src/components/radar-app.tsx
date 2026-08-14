@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   ArchiveIcon,
   ArrowLeftIcon,
@@ -94,6 +94,7 @@ export function RadarApp({ brief }: { brief: RadarBrief }) {
   const [showPriority, setShowPriority] = useState(false);
   const [pageIndex, setPageIndex] = useState(0);
   const [filterOpen, setFilterOpen] = useState(false);
+  const filterTriggerRef = useRef<HTMLButtonElement>(null);
   const savedSnapshot = useSyncExternalStore(subscribeToSavedSignals, getSavedSignalsSnapshot, getSavedSignalsServerSnapshot);
   const saved = useMemo(() => parseSavedSignals(savedSnapshot), [savedSnapshot]);
   const theme = useSyncExternalStore(subscribeToTheme, getThemeSnapshot, getThemeServerSnapshot);
@@ -101,6 +102,13 @@ export function RadarApp({ brief }: { brief: RadarBrief }) {
   useEffect(() => {
     window.scrollTo(0, 0);
   }, [view]);
+
+  useEffect(() => {
+    const compactViewport = window.matchMedia("(max-width: 1120px)");
+    const closeOutsideCompactViewport = () => { if (!compactViewport.matches) setFilterOpen(false); };
+    compactViewport.addEventListener("change", closeOutsideCompactViewport);
+    return () => compactViewport.removeEventListener("change", closeOutsideCompactViewport);
+  }, []);
 
   const toggleSaved = (id: string) => {
     const current = parseSavedSignals(getSavedSignalsSnapshot());
@@ -114,6 +122,11 @@ export function RadarApp({ brief }: { brief: RadarBrief }) {
     window.localStorage.setItem(THEME_KEY, nextTheme);
     window.dispatchEvent(new Event(THEME_EVENT));
   };
+
+  const closeFilter = useCallback(() => {
+    setFilterOpen(false);
+    requestAnimationFrame(() => filterTriggerRef.current?.focus());
+  }, []);
 
   const visibleSignals = useMemo(() => {
     return signals.filter((signal) => {
@@ -152,7 +165,7 @@ export function RadarApp({ brief }: { brief: RadarBrief }) {
         <button className="mobile-brand" onClick={() => setView("brief")} type="button"><RadarIcon size={20} /> Razer-Raders</button>
         <div className="mobile-actions">
           <ThemeToggle compact onToggle={toggleTheme} theme={theme} />
-          {view === "brief" && <button aria-label="打开筛选条件" className="icon-button" onClick={() => setFilterOpen(true)} type="button"><MenuIcon /></button>}
+          {view === "brief" && <button aria-controls="topic-filter-drawer" aria-expanded={filterOpen} aria-label="打开筛选条件" className="icon-button" onClick={() => setFilterOpen(true)} ref={filterTriggerRef} type="button"><MenuIcon /></button>}
         </div>
       </section>
 
@@ -169,7 +182,7 @@ export function RadarApp({ brief }: { brief: RadarBrief }) {
             filterOpen={filterOpen}
             hasAnySignals={signals.length > 0}
             mode={mode}
-            onCloseFilter={() => setFilterOpen(false)}
+            onCloseFilter={closeFilter}
             onSelectSignal={(id) => setSelectedId(id)}
             onPageChange={(nextPageIndex) => {
               const page = getBriefPage(visibleSignals, nextPageIndex);
@@ -271,9 +284,41 @@ function BriefView({
   onTopicChange: (topic: string) => void;
   topicOptions: readonly string[];
 }) {
+  const filterDrawerRef = useRef<HTMLElement>(null);
   const page = getBriefPage(visibleSignals, pageIndex);
   const presentation = { assessmentDelay, availability, hasPublishedSignals: hasAnySignals, pendingCandidateCount, visibleSignalCount: visibleSignals.length };
   const assessmentBanner = getAssessmentBanner(presentation);
+
+  useEffect(() => {
+    if (!filterOpen) return;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    filterDrawerRef.current?.querySelector<HTMLButtonElement>("[data-drawer-close]")?.focus();
+    return () => { document.body.style.overflow = previousOverflow; };
+  }, [filterOpen]);
+
+  const trapFilterFocus = (event: React.KeyboardEvent<HTMLElement>) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      onCloseFilter();
+      return;
+    }
+    if (event.key !== "Tab") return;
+
+    const focusable = filterDrawerRef.current?.querySelectorAll<HTMLElement>("button, select");
+    if (!focusable?.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (!first || !last) return;
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
 
   return (
     <div className="brief-layout">
@@ -301,10 +346,13 @@ function BriefView({
         {page.pageCount > 1 ? <nav aria-label="日报分页" className="brief-pagination"><button disabled={page.pageIndex === 0} onClick={() => onPageChange(page.pageIndex - 1)} type="button">上一页</button><span>第 {page.pageIndex + 1} / {page.pageCount} 页</span><button disabled={page.pageIndex === page.pageCount - 1} onClick={() => onPageChange(page.pageIndex + 1)} type="button">下一页</button></nav> : null}
       </section>
 
-      <aside className={`filter-drawer ${filterOpen ? "is-open" : ""}`} aria-label="主题筛选">
-        <div className="drawer-header"><span>筛选与排序</span><button className="icon-button" onClick={onCloseFilter} type="button"><ArrowLeftIcon /></button></div>
-        <FilterControls onTogglePriority={onTogglePriority} onTopicChange={onTopicChange} showPriority={showPriority} topic={topic} topicOptions={topicOptions} />
-      </aside>
+      {filterOpen ? <>
+        <button aria-label="点击遮罩关闭主题筛选" className="filter-backdrop" onClick={onCloseFilter} type="button" />
+        <aside aria-label="主题筛选" aria-modal="true" className="filter-drawer" id="topic-filter-drawer" onKeyDown={trapFilterFocus} ref={filterDrawerRef} role="dialog">
+          <div className="drawer-header"><span>筛选与排序</span><button aria-label="关闭主题筛选" className="icon-button" data-drawer-close onClick={onCloseFilter} type="button"><ArrowLeftIcon /></button></div>
+          <FilterControls onTogglePriority={onTogglePriority} onTopicChange={onTopicChange} showPriority={showPriority} topic={topic} topicOptions={topicOptions} />
+        </aside>
+      </> : null}
 
       <aside className="utility-rail">
         {coverage?.length ? <BriefCoverageSummary coverage={coverage} /> : null}
@@ -394,10 +442,23 @@ function AssessmentSection({ body, citations = [], isRisk = false, isSelectionRe
 }
 
 function FilterControls({ onTogglePriority, onTopicChange, showPriority, topic, topicOptions }: { onTogglePriority: () => void; onTopicChange: (topic: string) => void; showPriority: boolean; topic: string; topicOptions: readonly string[] }) {
+  const handleTopicKeyDown = (event: React.KeyboardEvent<HTMLSelectElement>) => {
+    const currentIndex = topicOptions.indexOf(topic);
+    const lastIndex = topicOptions.length - 1;
+    const nextIndex = event.key === "ArrowDown" ? Math.min(currentIndex + 1, lastIndex)
+      : event.key === "ArrowUp" ? Math.max(currentIndex - 1, 0)
+        : event.key === "Home" ? 0
+          : event.key === "End" ? lastIndex
+            : currentIndex;
+    if (nextIndex === currentIndex) return;
+    event.preventDefault();
+    onTopicChange(topicOptions[nextIndex]!);
+  };
+
   return <div className="filter-controls">
     <label>
       <span>主题</span>
-      <select onChange={(event) => onTopicChange(event.target.value)} value={topic}>
+      <select onChange={(event) => onTopicChange(event.target.value)} onKeyDown={handleTopicKeyDown} value={topic}>
         {topicOptions.map((option) => <option key={option}>{option}</option>)}
       </select>
     </label>
