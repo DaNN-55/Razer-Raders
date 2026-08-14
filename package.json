@@ -14,7 +14,7 @@
     "db:migrate": "node --experimental-strip-types src/db/migrate.ts",
     "worker": "node --experimental-strip-types src/worker.ts",
     "worker:once": "RADAR_WORKER_ONCE=true node --experimental-strip-types src/worker.ts",
-    "stack:refresh": "POSTGRES_PORT=5433 docker compose up --build -d"
+    "stack:refresh": "docker build -t razer-raders-live-app:latest . && docker compose -p razer-raders-live -f compose.yaml -f compose.live.yaml up -d --no-build --force-recreate migrate web worker"
   },
   "dependencies": {
     "next": "latest",
