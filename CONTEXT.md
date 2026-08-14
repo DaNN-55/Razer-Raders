@@ -33,7 +33,7 @@ The current reason a Radar Signal appears in a Daily Brief: New, Accelerating, o
 _Avoid_: Category, score
 
 **Source Connector**:
-A configured ingestion path that collects Source Evidence from one external source. The MVP connectors are GitHub Trending, Hugging Face Trending, Hacker News Show HN, and an Official Release Watchlist.
+A configured ingestion path that collects Source Evidence from one external source. The MVP connectors are GitHub Trending, Hugging Face Trending, and Hacker News Show HN.
 _Avoid_: Source, scraper
 
 **Radar Shortlist**:
@@ -136,6 +136,18 @@ _Avoid_: Ranking, Correction
 A Daily Brief that any visitor can read without an account. A device may locally record which signals its visitor has read.
 _Avoid_: Personal dashboard, account
 
+**Mobile Reading Experience**:
+The responsive Web presentation of Public Briefs and Radar Archive material for phone browsers, preserving the same core information and actions while adapting hierarchy and disclosure. It is not a separate mobile product, native application, or full mobile administration console.
+_Avoid_: Native app, separate mobile product, mobile administration console
+
+**Compact Navigation Shell**:
+The responsive application shell used at viewport widths through 1120px: a sticky three-item top navigation and an accessible, modal filter drawer. It replaces the desktop sidebar without removing Public Brief actions.
+_Avoid_: Incomplete tablet layout, separate mobile application
+
+**Archive View State**:
+The active Radar Archive query, result page, selected historical Signal, and its return context. It is reflected in the URL so a visitor can use browser navigation and return without losing their research context.
+_Avoid_: Ephemeral search, Daily Brief selection
+
 **Correction Record**:
 The time, reason, and resulting change associated with a Correction displayed on the affected Signal Card.
 _Avoid_: Silent edit, revision history
@@ -224,10 +236,6 @@ _Avoid_: Correction, telemetry
 The read-only application interface that retrieves Radar Archive material by time, topic, Signal Type, or Radar Subject and returns its supporting Source Evidence. A future chat interface may call it; MVP does not expose chat.
 _Avoid_: Chatbot, unrestricted web search
 
-**Official Release Watchlist**:
-A configurable Source Connector that collects Candidates from specified organizations' official release, product-update, research, or announcement sources. It is not a generic web crawler.
-_Avoid_: Community discussion, arbitrary crawl
-
 **Brief Snapshot**:
 The stable Daily Brief published at Publication Time. Later Candidates are considered for the next brief; only Corrections change a published snapshot and each change has a Correction Record.
 _Avoid_: Live feed, mutable daily page
@@ -245,7 +253,7 @@ The person holding the deployment-supplied administrator credential that authori
 _Avoid_: Public visitor, application user
 
 **Profile Configuration**:
-The non-sensitive, persisted settings of a Radar Profile, including Connector choices, Candidate Filters, scheduling, language, and Watchlist Entries. It is editable in the Profile Configuration Console and exportable or importable.
+The non-sensitive, persisted settings of a Radar Profile, including Connector choices, Candidate Filters, scheduling, and language. It is editable in the Profile Configuration Console and exportable or importable.
 _Avoid_: Source Credential, Model Runtime credential
 
 **Configuration Version**:
@@ -255,14 +263,6 @@ _Avoid_: Correction Record, draft setting
 **Connector Test**:
 An administrator-triggered, non-publishing check that validates a Source Connector against the active or proposed Profile Configuration.
 _Avoid_: Collection Cycle, Daily Brief
-
-**Watchlist Entry**:
-An organization name, official domain, and official RSS, Atom, or release URL configured for the Official Release Watchlist. Collection stays inside its registered domain.
-_Avoid_: Arbitrary URL, generic crawl
-
-**Reference Watchlist**:
-The default Official Release Watchlist for the Reference Instance: OpenAI, Anthropic, Google DeepMind, Meta AI, Microsoft AI, Mistral AI, Qwen, and DeepSeek.
-_Avoid_: Complete market coverage, global crawl
 
 **Assessment Pipeline**:
 The deterministic sequence that produces a Brief Snapshot: collection, candidate filtering, metric snapshots, primary-evidence enrichment, normalization and merging, ranking, structured assessment, Publication Validation, and publication.
