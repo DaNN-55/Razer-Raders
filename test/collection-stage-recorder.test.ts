@@ -39,12 +39,12 @@ test("部分条目失败会写入 Collection 阶段记录", async () => {
     clock: () => new Date("2026-08-12T01:00:00.000Z"),
     result: {
       candidateCount: 1,
-      connectorId: "official-watchlist",
+      connectorId: "show-hn",
       runId: "collection-run-partial",
       status: "succeeded",
-      warnings: ["OpenAI Release：HTTP 503"],
+      warnings: ["Show HN：HTTP 503"],
     },
   });
 
-  assert.equal(events[0]?.detail, "保留 1 个 Candidate；部分条目失败：OpenAI Release：HTTP 503");
+  assert.equal(events[0]?.detail, "保留 1 个 Candidate；部分条目失败：Show HN：HTTP 503");
 });

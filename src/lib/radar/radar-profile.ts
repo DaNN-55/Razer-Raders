@@ -1,12 +1,6 @@
 import type { ConnectorId } from "./connectors/types.ts";
 
-const connectorIds: readonly ConnectorId[] = ["github-trending", "hugging-face-trending", "show-hn", "official-watchlist"];
-
-export type OfficialWatchlistEntry = {
-  allowedHosts: readonly string[];
-  name: string;
-  url: string;
-};
+const connectorIds: readonly ConnectorId[] = ["github-trending", "hugging-face-trending", "show-hn"];
 
 export type RadarRuntimeConfig = {
   baseUrl: string;
@@ -22,7 +16,6 @@ export type RadarProfileConfig = {
   enabledConnectorIds: readonly ConnectorId[];
   excludeTerms: readonly string[];
   includeTerms: readonly string[];
-  officialWatchlist: readonly OfficialWatchlistEntry[];
   runtime: RadarRuntimeConfig;
 };
 
@@ -38,7 +31,6 @@ export type RadarProfileEnvironment = {
   RADAR_EXCLUDE_TERMS?: string;
   RADAR_INCLUDE_TERMS?: string;
   RADAR_MODEL_RUNTIME?: string;
-  RADAR_OFFICIAL_WATCHLIST?: string;
   RADAR_OLLAMA_BASE_URL?: string;
   RADAR_OLLAMA_MODEL?: string;
 };
@@ -80,31 +72,6 @@ function parseStringList(value: unknown, field: string) {
   return [...new Set(value.map((item) => item.trim().toLowerCase()))];
 }
 
-export function parseOfficialWatchlist(value: unknown): readonly OfficialWatchlistEntry[] {
-  if (!Array.isArray(value)) throw new Error("officialWatchlist 必须是数组。");
-  return value.map((entry) => {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw new Error("Official Release Watchlist 条目必须是对象。");
-    const raw = entry as { allowedHosts?: unknown; name?: unknown; url?: unknown };
-    const name = parseString(raw.name, "Official Release Watchlist name");
-    const rawUrl = parseString(raw.url, "Official Release Watchlist URL");
-    let entryUrl: URL;
-    try {
-      entryUrl = new URL(rawUrl);
-    } catch {
-      throw new Error("Official Release Watchlist URL 必须是有效 URL。");
-    }
-    if (entryUrl.protocol !== "https:" || entryUrl.username || entryUrl.password) {
-      throw new Error("Official Release Watchlist 仅允许明确登记的 HTTPS URL。");
-    }
-    const url = parseUrl(rawUrl, "Official Release Watchlist URL", ["https:"]);
-    const allowedHosts = parseStringList(raw.allowedHosts, "Official Release Watchlist 允许域名");
-    if (!allowedHosts.includes(new URL(url).hostname.toLowerCase())) {
-      throw new Error("Official Release Watchlist URL 必须属于登记的允许域名。");
-    }
-    return { allowedHosts, name, url };
-  });
-}
-
 function parseRuntime(value: unknown): RadarRuntimeConfig {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("runtime 必须是对象。");
   const runtime = value as Partial<RadarRuntimeConfig>;
@@ -126,21 +93,15 @@ export function parseRadarProfileConfig(value: unknown): RadarProfileConfig {
     throw new Error("enabledConnectorIds 包含未知 Connector。");
   }
 
-  const officialWatchlist = parseOfficialWatchlist(profile.officialWatchlist);
   const enabledConnectorIds = [...new Set(profile.enabledConnectorIds)];
   if (enabledConnectorIds.length === 0) {
     throw new Error("至少需要启用一个 Connector。");
   }
-  if (enabledConnectorIds.includes("official-watchlist") && officialWatchlist.length === 0) {
-    throw new Error("启用 Official Release Watchlist 前必须登记至少一个条目。");
-  }
-
   return {
     collectionIntervalMs: parseInteger(profile.collectionIntervalMs, "collectionIntervalMs", 60_000, 86_400_000),
     enabledConnectorIds,
     excludeTerms: parseStringList(profile.excludeTerms, "excludeTerms"),
     includeTerms: parseStringList(profile.includeTerms, "includeTerms"),
-    officialWatchlist,
     runtime: parseRuntime(profile.runtime),
   };
 }
@@ -156,17 +117,11 @@ export function createInitialRadarProfileConfig(environment: RadarProfileEnviron
       baseUrl: environment.RADAR_COMPATIBLE_RUNTIME_BASE_URL ?? "https://api.openai.com/v1",
       model: environment.RADAR_COMPATIBLE_RUNTIME_MODEL ?? "not-configured",
     };
-  let officialWatchlist: readonly OfficialWatchlistEntry[] = [];
-  if (environment.RADAR_OFFICIAL_WATCHLIST?.trim()) {
-    officialWatchlist = parseOfficialWatchlist(JSON.parse(environment.RADAR_OFFICIAL_WATCHLIST));
-  }
-
   return parseRadarProfileConfig({
     collectionIntervalMs: Number(environment.RADAR_COLLECTION_INTERVAL_MS ?? 7_200_000),
-    enabledConnectorIds: ["github-trending", "hugging-face-trending", "show-hn", ...(officialWatchlist.length ? ["official-watchlist"] : [])],
+    enabledConnectorIds: ["github-trending", "hugging-face-trending", "show-hn"],
     excludeTerms: readEnvironmentTerms(environment.RADAR_EXCLUDE_TERMS),
     includeTerms: readEnvironmentTerms(environment.RADAR_INCLUDE_TERMS),
-    officialWatchlist,
     runtime: {
       ...runtime,
       cycleBudgetSeconds: 1_800,

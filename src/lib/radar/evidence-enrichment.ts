@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Candidate } from "./connectors/types.ts";
 import { fetchRegisteredPage, type FetchedPage, type RegisteredSource } from "./fetch-gateway.ts";
-import type { OfficialWatchlistEntry } from "./radar-profile.ts";
 
 const MAX_EXCERPT_LENGTH = 500;
 
@@ -10,7 +9,7 @@ export type EvidenceDigest = {
   contentFingerprint: string;
   excerpts: readonly string[];
   fetchedAt: string;
-  sourceKind: "github-repository-description" | "github-readme" | "github-readme-function" | "github-release" | "hugging-face-summary" | "hugging-face-usage" | "hugging-face-technical" | "official-watchlist-title" | "official-watchlist-body";
+  sourceKind: "github-repository-description" | "github-readme" | "github-readme-function" | "github-release" | "hugging-face-summary" | "hugging-face-usage" | "hugging-face-technical";
   sourceName: string;
   sourceTitle: string;
   sourceUrl: string;
@@ -137,16 +136,10 @@ function sectionExcerpt(html: string, headingPattern: RegExp) {
   return paragraph ? textExcerpt(paragraph) : "";
 }
 
-function watchlistBodyExcerpt(html: string) {
-  const body = /<body\b[^>]*>([\s\S]*?)<\/body>/i.exec(html)?.[1] ?? html;
-  const paragraph = /<p\b[^>]*>([\s\S]*?)<\/p>/i.exec(body)?.[1];
-  return paragraph ? textExcerpt(paragraph) : "";
-}
-
-function eligibleProjectUrl(candidate: Candidate, officialWatchlist: readonly OfficialWatchlistEntry[]) {
+function eligibleProjectUrl(candidate: Candidate) {
   if (candidate.connectorId !== "show-hn") return candidate.url;
   return candidate.evidence.map((evidence) => evidence.sourceUrl).find((url) => Boolean(
-    githubIdentity(url) || huggingFaceIdentity(url) || officialWatchlist.some((entry) => entry.url === url),
+    githubIdentity(url) || huggingFaceIdentity(url),
   )) ?? "";
 }
 
@@ -187,8 +180,8 @@ export function createEvidenceEnricher(input: {
   };
 
   return {
-    async enrich(candidate: Candidate, { officialWatchlist }: { officialWatchlist: readonly OfficialWatchlistEntry[] }): Promise<EvidenceEnrichmentResult> {
-      const projectUrl = eligibleProjectUrl(candidate, officialWatchlist);
+    async enrich(candidate: Candidate): Promise<EvidenceEnrichmentResult> {
+      const projectUrl = eligibleProjectUrl(candidate);
       const github = githubIdentity(projectUrl);
       if (github) {
         const page = await fetchPage({ allowedHosts: ["github.com"], url: github.url });
@@ -293,40 +286,7 @@ export function createEvidenceEnricher(input: {
           status: digests.some((item) => isAnswerableExcerpt(item.excerpts.join(" "))) ? "enriched" : "insufficient-evidence",
         };
       }
-      const watchlistEntry = officialWatchlist.find((entry) => entry.url === projectUrl);
-      if (!watchlistEntry) {
-        return { candidateCanonicalIdentifier: candidate.canonicalIdentifier, digests: [], status: "insufficient-evidence" };
-      }
-      const page = await fetchPage(watchlistEntry);
-      const digests: EvidenceDigest[] = [];
-      const title = documentTitle(page.body, watchlistEntry.name);
-      if (title) {
-        digests.push(await retainStage(candidate, {
-          excerpts: [title],
-          sourceKind: "official-watchlist-title",
-          sourceName: watchlistEntry.name,
-          sourceTitle: title,
-          sourceUrl: watchlistEntry.url,
-        }, page.body));
-      }
-      if (!digests.some((item) => isAnswerableExcerpt(item.excerpts.join(" ")))) {
-        const body = watchlistBodyExcerpt(page.body);
-        if (body) {
-          digests.push(await retainStage(candidate, {
-            excerpts: [body],
-            sourceKind: "official-watchlist-body",
-            sourceName: watchlistEntry.name,
-            sourceTitle: title,
-            sourceUrl: watchlistEntry.url,
-          }, page.body));
-        }
-      }
-      return {
-        candidateCanonicalIdentifier: candidate.canonicalIdentifier,
-        digests,
-        resolvedCanonicalIdentifier: `official-watchlist:${watchlistEntry.url}`,
-        status: digests.some((item) => isAnswerableExcerpt(item.excerpts.join(" "))) ? "enriched" : "insufficient-evidence",
-      };
+      return { candidateCanonicalIdentifier: candidate.canonicalIdentifier, digests: [], status: "insufficient-evidence" };
     },
   };
 }

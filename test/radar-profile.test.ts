@@ -4,10 +4,9 @@ import { createInitialRadarProfileConfig, parseRadarProfileConfig } from "../src
 
 const profile = {
   collectionIntervalMs: 7_200_000,
-  enabledConnectorIds: ["github-trending", "official-watchlist"],
+  enabledConnectorIds: ["github-trending", "show-hn"],
   excludeTerms: ["irrelevant"],
   includeTerms: ["agent"],
-  officialWatchlist: [{ allowedHosts: ["openai.example"], name: "OpenAI Release", url: "https://openai.example/news" }],
   runtime: {
     baseUrl: "http://127.0.0.1:11434",
     cycleBudgetSeconds: 1_800,
@@ -18,19 +17,15 @@ const profile = {
   },
 };
 
-test("Radar Profile 只接受受限的非敏感运行时与 Watchlist 配置", () => {
+test("Radar Profile 只接受受限的非敏感运行时配置与三个内置来源", () => {
   assert.deepEqual(parseRadarProfileConfig(profile), profile);
   assert.throws(
     () => parseRadarProfileConfig({ ...profile, runtime: { ...profile.runtime, baseUrl: "https://key@example.com" } }),
     /不能包含凭据/,
   );
   assert.throws(
-    () => parseRadarProfileConfig({ ...profile, officialWatchlist: [{ ...profile.officialWatchlist[0], allowedHosts: ["other.example"] }] }),
-    /允许域名/,
-  );
-  assert.throws(
-    () => createInitialRadarProfileConfig({ RADAR_OFFICIAL_WATCHLIST: "not-json" }),
-    /JSON/,
+    () => parseRadarProfileConfig({ ...profile, enabledConnectorIds: ["official-watchlist"], officialWatchlist: [] }),
+    /未知 Connector/,
   );
 });
 

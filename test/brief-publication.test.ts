@@ -422,7 +422,7 @@ test("发布校验拒绝非中文评估，并保留每个来源的原始标题",
     ...candidate,
     evidence: [
       candidate.evidence[0]!,
-      { canonicalIdentifier: "official:codex-release", sourceName: "Official Release", sourceTitle: "Codex Release Notes", sourceUrl: "https://openai.com/codex-release" },
+      { canonicalIdentifier: "show-hn:codex-release", sourceName: "Show HN", sourceTitle: "Show HN: Codex", sourceUrl: "https://news.ycombinator.com/item?id=42" },
     ],
   };
   const archive = new InMemoryPublicationArchive([multiSourceCandidate]);
@@ -444,7 +444,7 @@ test("发布校验拒绝非中文评估，并保留每个来源的原始标题",
 
   assert.deepEqual(archive.published?.signals[0]?.evidence, [
     { label: "openai/codex", source: "GitHub Trending", url: "https://github.com/openai/codex" },
-    { label: "Codex Release Notes", source: "Official Release", url: "https://openai.com/codex-release" },
+    { label: "Show HN: Codex", source: "Show HN", url: "https://news.ycombinator.com/item?id=42" },
   ]);
 });
 

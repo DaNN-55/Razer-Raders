@@ -2,7 +2,6 @@ import type { SourceConnector } from "./assessment-pipeline.ts";
 import { createCandidateFilter } from "./candidate-filter.ts";
 import { githubTrendingConnector } from "./connectors/github-trending.ts";
 import { huggingFaceTrendingConnector } from "./connectors/hugging-face-trending.ts";
-import { createOfficialReleaseWatchlistConnector } from "./connectors/official-release-watchlist.ts";
 import { showHnConnector } from "./connectors/show-hn.ts";
 import type { RadarProfile } from "./radar-profile.ts";
 
@@ -17,8 +16,5 @@ export function createProfileCandidateFilter(profile: RadarProfile) {
 }
 
 export function createProfileSourceConnectors(profile: RadarProfile): readonly SourceConnector[] {
-  return profile.enabledConnectorIds.map((id) => {
-    if (id === "official-watchlist") return createOfficialReleaseWatchlistConnector(profile.officialWatchlist);
-    return connectors[id];
-  });
+  return profile.enabledConnectorIds.map((id) => connectors[id]);
 }

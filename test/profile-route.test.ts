@@ -9,7 +9,6 @@ const profile: RadarProfile = {
   excludeTerms: [],
   id: "profile@v1",
   includeTerms: [],
-  officialWatchlist: [],
   runtime: { baseUrl: "http://127.0.0.1:11434", cycleBudgetSeconds: 1_800, kind: "ollama", maxAssessmentsPerCycle: 5, model: "qwen3-local:8b", modelConcurrency: 1 },
   version: 1,
 };
@@ -59,14 +58,14 @@ test("首次配置时，Profile API 返回可编辑草稿而不启用未校验�
   assert.deepEqual(body.draft, profile);
 });
 
-test("Profile API 将无效的初始环境草稿转为明确 JSON 错误", async () => {
+test("Profile API 将无效的初始环境草稿转为明确错误", async () => {
   const dependency = dependencies();
   dependency.getActive = async () => null;
-  dependency.getDraft = () => { throw new Error("RADAR_OFFICIAL_WATCHLIST 不是有效 JSON。"); };
+  dependency.getDraft = () => { throw new Error("RADAR_COLLECTION_INTERVAL_MS 必须是有效整数。"); };
   const get = createProfileGetHandler(dependency);
   const response = await get(request("GET"));
   assert.equal(response.status, 400);
-  assert.deepEqual(await response.json(), { error: "RADAR_OFFICIAL_WATCHLIST 不是有效 JSON。" });
+  assert.deepEqual(await response.json(), { error: "RADAR_COLLECTION_INTERVAL_MS 必须是有效整数。" });
 });
 
 test("Profile 回滚会验证目标版本的运行时后才激活", async () => {

@@ -36,7 +36,7 @@ export const signals: Signal[] = [
     title: "Qwen3 开源：推理模型在多语言与 Agent 任务上拉齐一线能力",
     summary: "一组可切换思考模式的开放权重模型，给本地部署与 Agent 编排提供了更可控的选择。",
     topics: ["模型与推理", "Agent 与自动化"],
-    sources: ["GitHub Trending", "Hugging Face", "Official release"],
+    sources: ["GitHub Trending", "Hugging Face"],
     builderValue: "试用",
     productOpportunity: "待验证",
     happened: "Qwen 团队发布 Qwen3 系列开放权重模型，覆盖不同尺寸，并强调推理、代码与多语言任务的统一能力。",
@@ -44,7 +44,6 @@ export const signals: Signal[] = [
     technicalBasis: "模型采用混合专家与可控推理模式；具体能力范围应以模型卡、技术报告与后续复现结果为准。",
     risk: "基准结果与真实 Agent 工作流表现未必一致；需要用目标任务、显存占用与吞吐测试验证。",
     evidence: [
-      { label: "Qwen3 Technical Report", source: "Official release", url: "https://qwenlm.github.io/" },
       { label: "Qwen on Hugging Face", source: "Hugging Face", url: "https://huggingface.co/Qwen" },
       { label: "Qwen organization", source: "GitHub", url: "https://github.com/QwenLM" },
     ],
@@ -57,7 +56,7 @@ export const signals: Signal[] = [
     title: "MCP 工具链加速落地，模型连接外部世界的标准正在形成",
     summary: "从桌面客户端到开发工具，越来越多项目把 MCP 作为模型调用外部工具与数据的共同接口。",
     topics: ["Agent 与自动化", "开发工具"],
-    sources: ["GitHub Trending", "Show HN", "Official release"],
+    sources: ["GitHub Trending", "Show HN"],
     builderValue: "学习",
     productOpportunity: "值得探索",
     happened: "围绕 Model Context Protocol 的服务端、调试器与集成项目在开发者社区持续出现。",
@@ -65,7 +64,6 @@ export const signals: Signal[] = [
     technicalBasis: "MCP 为模型、客户端与工具服务端定义了标准化的上下文与调用交互；每种实现的权限边界仍需单独审查。",
     risk: "生态规范还在演进。将 MCP 当作安全边界或忽略工具授权，都会导致产品设计失真。",
     evidence: [
-      { label: "Model Context Protocol", source: "Official release", url: "https://modelcontextprotocol.io/" },
       { label: "MCP GitHub organization", source: "GitHub", url: "https://github.com/modelcontextprotocol" },
     ],
   },
@@ -97,7 +95,7 @@ export const signals: Signal[] = [
     title: "推理模型的产品评估，正在从基准分数转向任务完成成本",
     summary: "越来越多发布开始同时谈延迟、工具调用与任务成功率，Builder 的评估框架需要随之改变。",
     topics: ["模型与推理", "企业应用"],
-    sources: ["Official release", "Hugging Face"],
+    sources: ["Hugging Face"],
     builderValue: "学习",
     productOpportunity: "无",
     happened: "近期模型与推理产品更新集中强调真实任务表现、token 预算与调用成本。",
@@ -106,7 +104,6 @@ export const signals: Signal[] = [
     risk: "目前证据主要来自发布材料与社区反馈，尚不足以形成统一的行业结论。",
     evidence: [
       { label: "Hugging Face model cards", source: "Hugging Face", url: "https://huggingface.co/models" },
-      { label: "AI model announcements", source: "Official release", url: "https://openai.com/news/" },
     ],
   },
 ];
@@ -115,7 +112,6 @@ export const connectors = [
   { name: "GitHub Trending", caption: "公开趋势页 + 仓库补证", status: "新鲜", tone: "fresh" },
   { name: "Hugging Face", caption: "模型与 Spaces 热度", status: "新鲜", tone: "fresh" },
   { name: "Show HN", caption: "开发者首次展示", status: "轻度延迟", tone: "delayed" },
-  { name: "Official Release", caption: "已登记官方 Watchlist", status: "新鲜", tone: "fresh" },
 ] as const;
 
 export const topicOptions = ["全部主题", "Agent 与自动化", "模型与推理", "开发工具", "创作工具", "数据与基础设施", "研究", "企业应用"];

@@ -97,7 +97,7 @@ export async function getLatestPublishedBrief(): Promise<PublishedBrief | null> 
 export async function getConnectorHealth(): Promise<readonly RadarConnector[]> {
   const database = getDatabasePool();
   const result = await database.query<ConnectorRow>(
-    "SELECT name, caption, status, tone, detail FROM connector_health ORDER BY CASE connector_id WHEN 'github-trending' THEN 1 WHEN 'hugging-face-trending' THEN 2 WHEN 'show-hn' THEN 3 WHEN 'official-watchlist' THEN 4 ELSE 5 END",
+    "SELECT name, caption, status, tone, detail FROM connector_health WHERE connector_id IN ('github-trending', 'hugging-face-trending', 'show-hn') ORDER BY CASE connector_id WHEN 'github-trending' THEN 1 WHEN 'hugging-face-trending' THEN 2 WHEN 'show-hn' THEN 3 END",
   );
 
   return result.rows;

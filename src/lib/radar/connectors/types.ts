@@ -1,4 +1,4 @@
-export type ConnectorId = "github-trending" | "hugging-face-trending" | "show-hn" | "official-watchlist";
+export type ConnectorId = "github-trending" | "hugging-face-trending" | "show-hn";
 
 export type SignalType = "tool" | "model" | "concept" | "project" | "trend";
 

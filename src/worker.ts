@@ -62,7 +62,7 @@ async function collectConfiguredSources() {
     enrich: async (candidate, configurationVersion) => {
       const taskProfile = configurationVersion === profile.id || configurationVersion === "legacy" ? profile : await getRadarProfile(configurationVersion);
       if (!taskProfile) return { candidateCanonicalIdentifier: candidate.canonicalIdentifier, errorMessage: "任务 Profile 已不存在。", digests: [], status: "failed" };
-      return evidenceEnricher.enrich(candidate, { officialWatchlist: taskProfile.officialWatchlist });
+      return evidenceEnricher.enrich(candidate);
     },
     maxTasks: profile.runtime.maxAssessmentsPerCycle,
     getRuntime: async (configurationVersion) => {

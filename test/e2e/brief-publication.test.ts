@@ -9,7 +9,6 @@ import { createAssessmentPipeline, type SourceConnector } from "../../src/lib/ra
 import { getDatabasePool } from "../../src/lib/radar/database.ts";
 import type { Candidate } from "../../src/lib/radar/connectors/types.ts";
 import { collectHuggingFaceTrending } from "../../src/lib/radar/connectors/hugging-face-trending.ts";
-import { collectOfficialReleaseWatchlist, readOfficialReleaseWatchlist } from "../../src/lib/radar/connectors/official-release-watchlist.ts";
 import { collectShowHn } from "../../src/lib/radar/connectors/show-hn.ts";
 import { createOllamaRuntimeFromEnvironment } from "../../src/lib/radar/ollama-runtime.ts";
 import { getActiveRadarProfile, listRadarProfileVersions, rollbackRadarProfile, saveRadarProfile } from "../../src/lib/radar/profile-archive.ts";
@@ -282,6 +281,34 @@ test("Radar Profile 在 PostgreSQL 中版本化保存，并允许回滚到已验
   const rolledBack = await rollbackRadarProfile(initial.id);
   assert.equal(rolledBack.id, "profile@v1");
   assert.deepEqual((await getActiveRadarProfile())?.includeTerms, []);
+});
+
+test("旧 Official Release Profile 保留原始版本并安全映射为 GitHub Trending", { concurrency: false }, async () => {
+  const configuration = {
+    ...createInitialRadarProfileConfig({
+      RADAR_MODEL_RUNTIME: "ollama",
+      RADAR_OLLAMA_BASE_URL: "http://127.0.0.1:11434",
+      RADAR_OLLAMA_MODEL: "qwen3-local:8b",
+    }),
+    enabledConnectorIds: ["official-watchlist"],
+    officialWatchlist: [{ allowedHosts: ["openai.example"], name: "OpenAI Release", url: "https://openai.example/news" }],
+  };
+  await getDatabasePool().query(
+    "INSERT INTO radar_profile_versions (id, version, configuration) VALUES ('profile@v1', 1, $1)",
+    [JSON.stringify(configuration)],
+  );
+  await getDatabasePool().query(
+    "INSERT INTO radar_profile_state (singleton, active_profile_id) VALUES (TRUE, 'profile@v1')",
+  );
+
+  assert.deepEqual((await getActiveRadarProfile())?.enabledConnectorIds, ["github-trending"]);
+  assert.deepEqual((await listRadarProfileVersions()).map((profile) => profile.enabledConnectorIds), [["github-trending"]]);
+  assert.deepEqual((await rollbackRadarProfile("profile@v1")).enabledConnectorIds, ["github-trending"]);
+  const stored = await getDatabasePool().query<{ configuration: { officialWatchlist: unknown; enabledConnectorIds: string[] } }>(
+    "SELECT configuration FROM radar_profile_versions WHERE id = 'profile@v1'",
+  );
+  assert.deepEqual(stored.rows[0]?.configuration.enabledConnectorIds, ["official-watchlist"]);
+  assert.equal(Array.isArray(stored.rows[0]?.configuration.officialWatchlist), true);
 });
 
 test("固定 Runtime 经真实 PostgreSQL 按日发布后，API 读取 Snapshot、Provenance 与执行历史", { concurrency: false }, async () => {
@@ -740,95 +767,6 @@ test("Show HN 采集失败只更新自身 Connector Health", { concurrency: fals
     "SELECT status, detail FROM connector_health WHERE connector_id = 'show-hn'",
   );
   assert.deepEqual(health.rows, [{ detail: "Show HN unavailable", status: "采集失败" }]);
-});
-
-test("Official Release Watchlist 部分失败仍归档其余条目的 Primary Evidence", { concurrency: false }, async () => {
-  const entries = readOfficialReleaseWatchlist({
-    RADAR_OFFICIAL_WATCHLIST: JSON.stringify([
-      { allowedHosts: ["failed.example"], name: "Failed release", url: "https://failed.example/release" },
-      { allowedHosts: ["working.example"], name: "Working release", url: "https://working.example/release" },
-    ]),
-  });
-  const connector: SourceConnector = {
-    collect: () => collectOfficialReleaseWatchlist(entries, async (source) => {
-      if (source.url.includes("failed")) throw new Error("HTTP 503");
-      return { body: "<title>Working release</title>", contentType: "text/html", url: source.url };
-    }),
-    id: "official-watchlist",
-  };
-  const result = await createAssessmentPipeline({
-    archive: postgresAssessmentPipelineArchive,
-    clock: () => new Date("2026-08-12T02:00:00.000Z"),
-    createRunId: () => "collection-run-e2e-official-watchlist-partial",
-    modelRuntime: { id: "fixture-runtime" },
-    sourceConnectors: [connector],
-  }).runCollectionCycle("official-watchlist");
-
-  assert.deepEqual(result, {
-    candidateCount: 1,
-    connectorId: "official-watchlist",
-    runId: "collection-run-e2e-official-watchlist-partial",
-    status: "succeeded",
-    warnings: ["Failed release：HTTP 503"],
-  });
-  await recordCollectionCycle({
-    archive: postgresBriefPublicationArchive,
-    clock: () => new Date("2026-08-12T02:00:00.000Z"),
-    result,
-  });
-  const evidence = await getDatabasePool().query<{ association: string; source_title: string; source_url: string }>(
-    `SELECT candidate_evidence.association, evidence.source_title, evidence.source_url
-    FROM candidate_source_evidence candidate_evidence
-    JOIN source_evidence evidence ON evidence.id = candidate_evidence.evidence_id
-    WHERE candidate_evidence.candidate_id = 'official-watchlist:https://working.example/release'`,
-  );
-  assert.deepEqual(evidence.rows, [{ association: "primary", source_title: "Working release", source_url: "https://working.example/release" }]);
-  const [health, stage] = await Promise.all([
-    getDatabasePool().query<{ detail: string | null; status: string }>(
-      "SELECT status, detail FROM connector_health WHERE connector_id = 'official-watchlist'",
-    ),
-    getDatabasePool().query<{ detail: string; status: string }>(
-      "SELECT status, detail FROM pipeline_runs WHERE collection_run_id = 'collection-run-e2e-official-watchlist-partial'",
-    ),
-  ]);
-  assert.deepEqual(health.rows, [{ detail: "Failed release：HTTP 503", status: "部分失败" }]);
-  assert.deepEqual(stage.rows, [{ detail: "保留 1 个 Candidate；部分条目失败：Failed release：HTTP 503", status: "succeeded" }]);
-});
-
-test("Official Release Watchlist 全部失败时记录独立 Health 与任务失败", { concurrency: false }, async () => {
-  const entries = readOfficialReleaseWatchlist({
-    RADAR_OFFICIAL_WATCHLIST: JSON.stringify([
-      { allowedHosts: ["failed.example"], name: "Failed release", url: "https://failed.example/release" },
-    ]),
-  });
-  const connector: SourceConnector = {
-    collect: () => collectOfficialReleaseWatchlist(entries, async () => { throw new Error("HTTP 503"); }),
-    id: "official-watchlist",
-  };
-  const result = await createAssessmentPipeline({
-    archive: postgresAssessmentPipelineArchive,
-    clock: () => new Date("2026-08-12T02:00:00.000Z"),
-    createRunId: () => "collection-run-e2e-official-watchlist-failed",
-    modelRuntime: { id: "fixture-runtime" },
-    sourceConnectors: [connector],
-  }).runCollectionCycle("official-watchlist");
-
-  assert.deepEqual(result, {
-    connectorId: "official-watchlist",
-    errorMessage: "Official Release Watchlist 采集失败：Failed release：HTTP 503",
-    runId: "collection-run-e2e-official-watchlist-failed",
-    status: "failed",
-  });
-  const [run, health] = await Promise.all([
-    getDatabasePool().query<{ error_message: string; status: string }>(
-      "SELECT status, error_message FROM collection_runs WHERE id = 'collection-run-e2e-official-watchlist-failed'",
-    ),
-    getDatabasePool().query<{ detail: string | null; status: string }>(
-      "SELECT status, detail FROM connector_health WHERE connector_id = 'official-watchlist'",
-    ),
-  ]);
-  assert.deepEqual(run.rows, [{ error_message: "Official Release Watchlist 采集失败：Failed release：HTTP 503", status: "failed" }]);
-  assert.deepEqual(health.rows, [{ detail: "Official Release Watchlist 采集失败：Failed release：HTTP 503", status: "采集失败" }]);
 });
 
 test("跨日发布不会改写前一日 Snapshot 与 Provenance", { concurrency: false }, async () => {

@@ -40,15 +40,6 @@ const huggingFaceCandidate: Candidate = {
   url: "https://huggingface.co/Qwen/Qwen3-8B",
 };
 
-const officialCandidate: Candidate = {
-  ...githubCandidate,
-  canonicalIdentifier: "official-watchlist:https://openai.example/news/gpt-5",
-  connectorId: "official-watchlist",
-  subjectCanonicalIdentifier: "official-watchlist:https://openai.example/news/gpt-5",
-  title: "GPT-5 release",
-  url: "https://openai.example/news/gpt-5",
-};
-
 test("GitHub Candidate 的仓库简介足以说明用途时，只保留该官方 Primary Evidence", async () => {
   const archive = new InMemoryEvidenceDigestArchive();
   const requested: string[] = [];
@@ -65,7 +56,7 @@ test("GitHub Candidate 的仓库简介足以说明用途时，只保留该官方
     },
   });
 
-  const result = await enricher.enrich(githubCandidate, { officialWatchlist: [] });
+  const result = await enricher.enrich(githubCandidate);
 
   assert.equal(result.status, "enriched");
   assert.deepEqual(requested, ["https://github.com/openai/codex"]);
@@ -97,7 +88,7 @@ test("GitHub 仓库简介缺失时，补证回退到 README 开头而不请求 R
     },
   });
 
-  const result = await enricher.enrich(githubCandidate, { officialWatchlist: [] });
+  const result = await enricher.enrich(githubCandidate);
 
   assert.equal(result.status, "enriched");
   assert.deepEqual(requested, ["https://github.com/openai/codex"]);
@@ -123,7 +114,7 @@ test("GitHub README 无法说明用途时，才继续读取受限的 Releases �
     },
   });
 
-  const result = await enricher.enrich(githubCandidate, { officialWatchlist: [] });
+  const result = await enricher.enrich(githubCandidate);
 
   assert.equal(result.status, "enriched");
   assert.deepEqual(requested, ["https://github.com/openai/codex", "https://github.com/openai/codex/releases"]);
@@ -146,7 +137,7 @@ test("GitHub README 开头不足时，继续读取功能段而不访问 Releases
     },
   });
 
-  const result = await enricher.enrich(githubCandidate, { officialWatchlist: [] });
+  const result = await enricher.enrich(githubCandidate);
 
   assert.equal(result.status, "enriched");
   assert.deepEqual(requested, [githubCandidate.url]);
@@ -169,7 +160,7 @@ test("Hugging Face 模型卡摘要不足时，按顺序回退到使用说明", a
     },
   });
 
-  const result = await enricher.enrich(huggingFaceCandidate, { officialWatchlist: [] });
+  const result = await enricher.enrich(huggingFaceCandidate);
 
   assert.equal(result.status, "enriched");
   assert.deepEqual(requested, ["https://huggingface.co/Qwen/Qwen3-8B"]);
@@ -188,35 +179,10 @@ test("Hugging Face 使用说明不足时，按顺序回退到技术段", async (
     }),
   });
 
-  const result = await enricher.enrich(huggingFaceCandidate, { officialWatchlist: [] });
+  const result = await enricher.enrich(huggingFaceCandidate);
 
   assert.equal(result.status, "enriched");
   assert.deepEqual(result.digests.map((digest) => digest.sourceKind), ["hugging-face-summary", "hugging-face-usage", "hugging-face-technical"]);
-});
-
-test("已登记 Watchlist 先保留页面标题，标题不足时才摘录有限正文", async () => {
-  const archive = new InMemoryEvidenceDigestArchive();
-  const requested: string[] = [];
-  const enricher = createEvidenceEnricher({
-    archive,
-    clock: () => new Date("2026-08-13T02:01:00.000Z"),
-    fetchPage: async (source) => {
-      requested.push(source.url);
-      return {
-        body: '<html><head><title>GPT-5 Release</title></head><body><p>GPT-5 helps builders automate code review and implementation work through a bounded agent workflow.</p><p>Do not retain this complete page.</p></body></html>',
-        contentType: "text/html",
-        url: source.url,
-      };
-    },
-  });
-  const watchlist = [{ allowedHosts: ["openai.example"], name: "OpenAI Release", url: officialCandidate.url }];
-
-  const result = await enricher.enrich(officialCandidate, { officialWatchlist: watchlist });
-
-  assert.equal(result.status, "enriched");
-  assert.deepEqual(requested, [officialCandidate.url]);
-  assert.deepEqual(result.digests.map((digest) => digest.sourceKind), ["official-watchlist-title", "official-watchlist-body"]);
-  assert.ok(result.digests.every((digest) => !digest.excerpts.join(" ").includes("Do not retain this complete page.")));
 });
 
 test("Show HN 只桥接精确的允许项目链接，任意外链保持证据不足且不抓取", async () => {
@@ -251,12 +217,12 @@ test("Show HN 只桥接精确的允许项目链接，任意外链保持证据不
     url: "https://news.ycombinator.com/item?id=42",
   };
 
-  const rejected = await enricher.enrich(showHnCandidate, { officialWatchlist: [] });
+  const rejected = await enricher.enrich(showHnCandidate);
   const accepted = await enricher.enrich({
     ...showHnCandidate,
     canonicalIdentifier: "show-hn:43",
     evidence: [{ ...showHnCandidate.evidence[0]!, canonicalIdentifier: "show-hn:43:link", sourceUrl: githubCandidate.url }],
-  }, { officialWatchlist: [] });
+  });
 
   assert.deepEqual(rejected, { candidateCanonicalIdentifier: "show-hn:42", digests: [], status: "insufficient-evidence" });
   assert.equal(accepted.status, "enriched");
@@ -276,8 +242,8 @@ test("相同官方 URL 的内容指纹未变化时复用已存 Digest，不重�
     }),
   });
 
-  const first = await enricher.enrich(githubCandidate, { officialWatchlist: [] });
-  const second = await enricher.enrich(githubCandidate, { officialWatchlist: [] });
+  const first = await enricher.enrich(githubCandidate);
+  const second = await enricher.enrich(githubCandidate);
 
   assert.equal(archive.saved.length, 1);
   assert.deepEqual(second.digests, first.digests);
@@ -295,7 +261,7 @@ test("摘录会在保存前脱敏疑似凭据", async () => {
     }),
   });
 
-  const result = await enricher.enrich(githubCandidate, { officialWatchlist: [] });
+  const result = await enricher.enrich(githubCandidate);
 
   assert.equal(result.status, "enriched");
   assert.match(result.digests[0]?.excerpts[0] ?? "", /\[REDACTED\]/);

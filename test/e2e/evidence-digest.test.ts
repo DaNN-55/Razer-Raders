@@ -34,8 +34,8 @@ test("真实 PostgreSQL 保存有限 Digest、来源关联并按未变指纹复�
     fetchPage: async (source) => ({ body, contentType: "text/html", url: source.url }),
   });
 
-  await enricher.enrich(candidate, { officialWatchlist: [] });
-  await enricher.enrich(candidate, { officialWatchlist: [] });
+  await enricher.enrich(candidate);
+  await enricher.enrich(candidate);
   const relatedCandidate: Candidate = {
     ...candidate,
     canonicalIdentifier: "show-hn:42",
@@ -53,7 +53,7 @@ test("真实 PostgreSQL 保存有限 Digest、来源关联并按未变指纹复�
     url: "https://news.ycombinator.com/item?id=42",
   };
   await postgresAssessmentPipelineArchive.upsertCandidate(relatedCandidate);
-  await enricher.enrich(relatedCandidate, { officialWatchlist: [] });
+  await enricher.enrich(relatedCandidate);
 
   const result = await getDatabasePool().query<{
     candidate_id: string;

@@ -154,14 +154,14 @@ test("Connector 的部分采集警告会保留在 Health 状态中", async () =>
   const archive = new InMemoryRadarArchive();
   const collection = collectionResult("2026-08-12T04:00:00.000Z");
   const candidate = collection.candidates[0]!;
-  const officialCandidate: Candidate = {
+  const showHnCandidate: Candidate = {
     ...candidate,
-    connectorId: "official-watchlist",
-    evidence: candidate.evidence.map((evidence) => ({ ...evidence, connectorId: "official-watchlist" })),
+    connectorId: "show-hn",
+    evidence: candidate.evidence.map((evidence) => ({ ...evidence, connectorId: "show-hn" })),
   };
   const connector: SourceConnector = {
-    collect: async () => ({ ...collection, candidates: [officialCandidate], connectorId: "official-watchlist", warnings: ["OpenAI Release：HTTP 503"] }),
-    id: "official-watchlist",
+    collect: async () => ({ ...collection, candidates: [showHnCandidate], connectorId: "show-hn", warnings: ["Show HN：HTTP 503"] }),
+    id: "show-hn",
   };
   const result = await createAssessmentPipeline({
     archive,
@@ -169,17 +169,17 @@ test("Connector 的部分采集警告会保留在 Health 状态中", async () =>
     createRunId: () => "partial-run",
     modelRuntime: fixtureRuntime,
     sourceConnectors: [connector],
-  }).runCollectionCycle("official-watchlist");
+  }).runCollectionCycle("show-hn");
 
   assert.deepEqual(result, {
     candidateCount: 1,
-    connectorId: "official-watchlist",
+    connectorId: "show-hn",
     runId: "partial-run",
     status: "succeeded",
-    warnings: ["OpenAI Release：HTTP 503"],
+    warnings: ["Show HN：HTTP 503"],
   });
-  assert.deepEqual(archive.connectorHealth.get("official-watchlist"), {
-    detail: "OpenAI Release：HTTP 503",
+  assert.deepEqual(archive.connectorHealth.get("show-hn"), {
+    detail: "Show HN：HTTP 503",
     lastSuccessAt: "2026-08-12T04:00:00.000Z",
     status: "部分失败",
     tone: "delayed",
@@ -194,7 +194,7 @@ test("Canonical Identifier 不一致的 Source Evidence 保留为关联证据，
   const relatedEvidence: SourceEvidence = {
     ...candidate.evidence[0]!,
     canonicalIdentifier: "official:openai/codex-release",
-    sourceName: "Official Release",
+    sourceName: "GitHub Releases",
     sourceTitle: "Codex release notes",
     sourceUrl: "https://openai.com/codex-release",
   };

@@ -15,8 +15,16 @@ type ProfileRow = QueryResultRow & {
   version: number;
 };
 
+function projectRetiredConnector(configuration: unknown) {
+  if (!configuration || typeof configuration !== "object" || Array.isArray(configuration)) return configuration;
+  const stored = configuration as Record<string, unknown>;
+  if (!Array.isArray(stored.enabledConnectorIds) || !stored.enabledConnectorIds.includes("official-watchlist")) return configuration;
+  const enabledConnectorIds = stored.enabledConnectorIds.filter((connectorId) => connectorId !== "official-watchlist");
+  return { ...stored, enabledConnectorIds: enabledConnectorIds.length ? enabledConnectorIds : ["github-trending"] };
+}
+
 function toProfile(row: ProfileRow): RadarProfile {
-  return { id: row.id, version: row.version, ...parseRadarProfileConfig(row.configuration) };
+  return { id: row.id, version: row.version, ...parseRadarProfileConfig(projectRetiredConnector(row.configuration)) };
 }
 
 async function readActiveProfile(): Promise<RadarProfile | null> {
