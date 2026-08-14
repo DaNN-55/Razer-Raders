@@ -1,6 +1,7 @@
 services:
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_DB: razer_raders
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-development-only}
@@ -28,6 +29,7 @@ services:
   web:
     build: .
     command: ["node", ".next/standalone/server.js"]
+    restart: unless-stopped
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -44,10 +46,17 @@ services:
       RADAR_OLLAMA_MODEL: ${RADAR_OLLAMA_MODEL:-}
     ports:
       - "3000:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/api/brief >/dev/null"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
   worker:
     build: .
     command: ["pnpm", "worker"]
+    restart: unless-stopped
     depends_on:
       migrate:
         condition: service_completed_successfully
