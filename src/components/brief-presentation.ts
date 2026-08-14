@@ -40,7 +40,6 @@ export function getBriefFormatLabel(pipelineVersion: string | undefined) {
 
 export function getSignalCardSections(signal: Signal) {
   return [
-    { body: signal.summary, citations: signal.sectionCitations?.summary, title: "一句话判断" },
     { body: signal.happened, citations: signal.sectionCitations?.happened, title: "发生了什么" },
     { body: signal.whyNow, citations: signal.sectionCitations?.whyNow, title: "为什么值得关注" },
     { body: signal.technicalBasis, citations: signal.sectionCitations?.technicalBasis, title: "它靠什么实现" },
