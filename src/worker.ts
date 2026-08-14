@@ -1,78 +1,23 @@
 import { randomUUID } from "node:crypto";
-import { createAssessmentPipeline } from "./lib/radar/assessment-pipeline.ts";
-import { postgresAssessmentPipelineArchive } from "./lib/radar/assessment-pipeline-archive.ts";
 import { postgresBriefPublicationArchive } from "./lib/radar/brief-publication-archive.ts";
-import { postgresEvidenceDigestArchive } from "./lib/radar/evidence-digest-archive.ts";
-import { createEvidenceEnricher } from "./lib/radar/evidence-enrichment.ts";
 import { createReadyBriefPublisher } from "./lib/radar/brief-publication.ts";
 import { MAX_DAILY_BRIEF_SIGNALS } from "./lib/radar/brief-contract.ts";
 import { createCitationAccessibilityCheck } from "./lib/radar/citation-accessibility.ts";
-import { recordCollectionCycle } from "./lib/radar/collection-stage-recorder.ts";
+import { collectConfiguredSources } from "./lib/radar/configured-collection.ts";
 import { createDailyPublicationSchedule } from "./lib/radar/daily-publication-schedule.ts";
-import type { ConnectorId } from "./lib/radar/connectors/types.ts";
 import { getDatabasePool } from "./lib/radar/database.ts";
-import { createProfileCandidateFilter, createProfileSourceConnectors } from "./lib/radar/profile-collection.ts";
-import { getRadarProfile, getRequiredRadarProfile } from "./lib/radar/profile-archive.ts";
-import { createModelRuntimeFromProfile } from "./lib/radar/profile-runtime.ts";
+import { getRequiredRadarProfile } from "./lib/radar/profile-archive.ts";
 import { createTaskWorkerSchedule } from "./lib/radar/task-worker-schedule.ts";
-import { createCandidateTaskWorker, postgresCandidateTaskArchive } from "./lib/radar/task-queue.ts";
 
 const defaultCollectionIntervalMs = 2 * 60 * 60 * 1000;
 
-async function collectSourceIntoArchive(connectorId: ConnectorId, pipeline: ReturnType<typeof createAssessmentPipeline>) {
-  const result = await pipeline.runCollectionCycle(connectorId);
-  await recordCollectionCycle({
-    archive: postgresBriefPublicationArchive,
-    clock: () => new Date(),
-    result,
-  });
-  if (result.status === "succeeded") {
-    console.log(`${connectorId} 采集完成：${result.candidateCount} 个候选`);
-  } else {
-    console.error(`${connectorId} 采集失败：${result.errorMessage}`);
+async function collectScheduledSources() {
+  const result = await collectConfiguredSources();
+  if (result.status === "already-running") {
+    console.log("已有采集正在执行，跳过重复的定时采集。");
+    return "succeeded" as const;
   }
-  return result;
-}
-
-async function collectConfiguredSources() {
-  const profile = await getRequiredRadarProfile();
-  const sourceConnectors = createProfileSourceConnectors(profile);
-  const evidenceEnricher = createEvidenceEnricher({
-    archive: postgresEvidenceDigestArchive,
-    clock: () => new Date(),
-  });
-  const pipeline = createAssessmentPipeline({
-    archive: postgresAssessmentPipelineArchive,
-    candidateFilter: createProfileCandidateFilter(profile),
-    clock: () => new Date(),
-    createRunId: randomUUID,
-    enqueueCandidate: (candidate) => postgresCandidateTaskArchive.enqueueEnrichment({
-      candidate,
-      configurationVersion: profile.id,
-      runtimeId: `${profile.runtime.kind}:${profile.runtime.model}`,
-    }),
-    modelRuntime: { id: profile.runtime.kind },
-    sourceConnectors,
-  });
-  const results = await Promise.all(sourceConnectors.map((connector) => collectSourceIntoArchive(connector.id, pipeline)));
-  await createCandidateTaskWorker({
-    archive: postgresCandidateTaskArchive,
-    clock: () => new Date(),
-    concurrency: profile.runtime.modelConcurrency,
-    enrich: async (candidate, configurationVersion) => {
-      const taskProfile = configurationVersion === profile.id || configurationVersion === "legacy" ? profile : await getRadarProfile(configurationVersion);
-      if (!taskProfile) return { candidateCanonicalIdentifier: candidate.canonicalIdentifier, errorMessage: "任务 Profile 已不存在。", digests: [], status: "failed" };
-      return evidenceEnricher.enrich(candidate);
-    },
-    maxTasks: profile.runtime.maxAssessmentsPerCycle,
-    getRuntime: async (configurationVersion) => {
-      const taskProfile = configurationVersion === profile.id || configurationVersion === "legacy" ? profile : await getRadarProfile(configurationVersion);
-      return taskProfile ? createModelRuntimeFromProfile(taskProfile) : null;
-    },
-    timeBudgetMs: profile.runtime.cycleBudgetSeconds * 1_000,
-    workerId: randomUUID(),
-  }).runCycle();
-  return results.some((result) => result.status === "succeeded") ? "succeeded" as const : "failed" as const;
+  return result.status;
 }
 
 async function publishDailyBriefIfConfigured() {
@@ -101,7 +46,7 @@ async function runWorker() {
     clock: () => new Date(),
     collectionIntervalMs: defaultCollectionIntervalMs,
     getCollectionIntervalMs: async () => (await getRequiredRadarProfile()).collectionIntervalMs,
-    collect: collectConfiguredSources,
+    collect: collectScheduledSources,
     onError: (error) => console.error("Task Worker 任务失败：", error),
     publish: publishDailyBriefWhenDue,
     timers: { clearInterval, clearTimeout, setInterval, setTimeout },

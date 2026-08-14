@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createProfileGetHandler, createProfileModelsHandler, createProfilePutHandler, createProfileReassessHandler, createProfileRollbackHandler, type ProfileRouteDependencies } from "../src/lib/radar/profile-route.ts";
+import { createProfileCollectionHandler, createProfileGetHandler, createProfileModelsHandler, createProfilePutHandler, createProfileReassessHandler, createProfileRollbackHandler, type ProfileRouteDependencies } from "../src/lib/radar/profile-route.ts";
 import type { RadarProfile } from "../src/lib/radar/radar-profile.ts";
 
 const profile: RadarProfile = {
@@ -96,4 +96,29 @@ test("管理员可显式复评当前已评估待发布集合", async () => {
   assert.equal((await reassess(request("POST", undefined, ""))).status, 401);
   assert.deepEqual(await (await reassess(request("POST"))).json(), { requeuedCount: 3 });
   assert.equal(requeued, 1);
+});
+
+test("管理员可立即采集，但不会触发 Daily Brief 发布", async () => {
+  let collectionRuns = 0;
+  const collect = createProfileCollectionHandler({
+    environment: { RADAR_ADMIN_TOKEN: "admin-token" },
+    run: async () => {
+      collectionRuns += 1;
+      return {
+        connectorResults: [
+          { candidateCount: 2, connectorId: "github-trending", runId: "collection-manual-1", status: "succeeded" as const },
+        ],
+        status: "succeeded" as const,
+      };
+    },
+  });
+
+  assert.equal((await collect(request("POST", undefined, ""))).status, 401);
+  assert.deepEqual(await (await collect(request("POST"))).json(), {
+    connectorResults: [
+      { candidateCount: 2, connectorId: "github-trending", runId: "collection-manual-1", status: "succeeded" },
+    ],
+    status: "succeeded",
+  });
+  assert.equal(collectionRuns, 1);
 });

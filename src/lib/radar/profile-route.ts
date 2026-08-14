@@ -1,4 +1,5 @@
 import { getAdminAccessError, type AdminEnvironment } from "./profile-auth.ts";
+import type { ConfiguredCollectionResult } from "./configured-collection.ts";
 import type { RadarProfile, RadarProfileConfig } from "./radar-profile.ts";
 import { parseRadarProfileConfig } from "./radar-profile.ts";
 
@@ -115,6 +116,21 @@ export function createProfileReassessHandler(dependencies: {
     if (unauthorized) return unauthorized;
     try {
       return Response.json({ requeuedCount: await dependencies.requeue() });
+    } catch (error) {
+      return errorResponse(error);
+    }
+  };
+}
+
+export function createProfileCollectionHandler(dependencies: {
+  environment?: AdminEnvironment;
+  run: () => Promise<ConfiguredCollectionResult>;
+}) {
+  return async function POST(request: Request): Promise<Response> {
+    const unauthorized = authorizationError(request, dependencies.environment);
+    if (unauthorized) return unauthorized;
+    try {
+      return Response.json(await dependencies.run());
     } catch (error) {
       return errorResponse(error);
     }
