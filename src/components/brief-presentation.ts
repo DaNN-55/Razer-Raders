@@ -29,8 +29,8 @@ export function getAssessmentBanner(input: BriefPresentationInput) {
 
 export function getBriefCoverageLabel(coverage: readonly BriefCoverageConnector[]) {
   const enabled = coverage.filter((connector) => connector.isEnabled);
-  const completed = enabled.filter((connector) => connector.status === "新鲜");
-  return `本期覆盖 ${completed.length}/${enabled.length} 个已启用来源`;
+  const freshEnabled = enabled.filter((connector) => connector.status === "新鲜");
+  return `本期覆盖 ${freshEnabled.length}/${enabled.length} 个已启用来源`;
 }
 
 export function getBriefPage<T>(signals: readonly T[], requestedPageIndex: number) {

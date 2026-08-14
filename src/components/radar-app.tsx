@@ -286,6 +286,7 @@ function BriefView({
           <p>从 7 天观察窗口中筛出有证据、可行动的变化。未验证的判断会明确标注。</p>
           {assessmentBanner ? <p className="assessment-banner">{assessmentBanner}</p> : null}
         </header>
+        {coverage?.length ? <div className="mobile-coverage"><BriefCoverageSummary coverage={coverage} /></div> : null}
 
         <div className="signal-list" aria-label="今日雷达短名单">
           {page.signals.length ? page.signals.map((signal) => (
