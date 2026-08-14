@@ -1,6 +1,6 @@
 import type { QueryResultRow } from "pg";
 import type { PublicationArchive, PublicationCandidate, PublishedSignalInput, ReadyPublicationAssessment } from "./brief-publication.ts";
-import type { GroundedAssessment } from "./assessment-contract.ts";
+import type { EvidenceFirstAssessment } from "./assessment-contract.ts";
 import type { BriefProvenance } from "./brief-contract.ts";
 import { getDatabasePool, withTransaction } from "./database.ts";
 
@@ -16,8 +16,12 @@ type CandidateRow = QueryResultRow & {
 };
 
 type ReadyCandidateRow = CandidateRow & {
-  assessment_result: GroundedAssessment;
+  assessment_result: EvidenceFirstAssessment;
   configuration_version: string;
+  cross_source_count: number;
+  last_collected_at: Date;
+  observation_count: number;
+  primary_evidence_count: number;
   runtime_id: string;
 };
 
@@ -66,8 +70,11 @@ export const postgresBriefPublicationArchive: PublicationArchive = {
   async getReadyAssessments(limit = 10) {
     const result = await getDatabasePool().query<ReadyCandidateRow>(
       `SELECT candidate.canonical_identifier, candidate.title, candidate.signal_state, candidate.priority,
-        candidate.ranking_score, candidate.ranking_policy_version, candidate.selection_reason,
+        candidate.ranking_score, candidate.ranking_policy_version, candidate.selection_reason, candidate.last_collected_at,
         assessment.configuration_version, assessment.runtime_id, candidate.assessment_result,
+        candidate.observation_count,
+        COUNT(DISTINCT digest.id)::integer AS primary_evidence_count,
+        COUNT(DISTINCT source_evidence.connector_id)::integer AS cross_source_count,
         COALESCE(jsonb_agg(jsonb_build_object(
           'canonicalIdentifier', digest.canonical_identifier,
           'excerpts', digest.excerpts,
@@ -81,10 +88,15 @@ export const postgresBriefPublicationArchive: PublicationArchive = {
         AND assessment.id = candidate.assessment_task_id
       LEFT JOIN candidate_task_evidence_digests task_digest ON task_digest.task_id = assessment.id
       LEFT JOIN evidence_digests digest ON digest.id = task_digest.digest_id
+      LEFT JOIN candidate_source_evidence candidate_source ON candidate_source.candidate_id = candidate.id
+      LEFT JOIN source_evidence ON source_evidence.id = candidate_source.evidence_id
       WHERE candidate.evaluation_status = 'ready'
         AND candidate.last_collected_at >= NOW() - INTERVAL '7 days'
       GROUP BY candidate.id, assessment.id
-      ORDER BY candidate.ranking_score DESC, candidate.last_collected_at DESC
+      ORDER BY CASE candidate.assessment_result ->> 'builderValue'
+          WHEN '试用' THEN 0 WHEN '学习' THEN 1 WHEN '跟进' THEN 2 WHEN '跳过' THEN 3 ELSE 4 END,
+        COUNT(DISTINCT digest.id) DESC, candidate.ranking_score DESC, candidate.last_collected_at DESC,
+        candidate.observation_count DESC, COUNT(DISTINCT source_evidence.connector_id) DESC
       LIMIT $1`,
       [limit],
     );
@@ -101,6 +113,12 @@ export const postgresBriefPublicationArchive: PublicationArchive = {
         title: candidate.title,
       },
       configurationVersion: candidate.configuration_version,
+      ranking: {
+        crossSourceCount: candidate.cross_source_count,
+        lastCollectedAt: candidate.last_collected_at.toISOString(),
+        observationCount: candidate.observation_count,
+        primaryEvidenceCount: candidate.primary_evidence_count,
+      },
       runtimeId: candidate.runtime_id,
     } satisfies ReadyPublicationAssessment));
   },
@@ -146,9 +164,9 @@ export const postgresBriefPublicationArchive: PublicationArchive = {
         await client.query(
           `INSERT INTO radar_signals (
             id, brief_id, candidate_id, display_index, state, priority, title, summary, topics, sources,
-            builder_value, product_opportunity, happened, why_now, technical_basis, risk, evidence, section_citations
+            builder_value, product_opportunity, happened, why_now, why_in_brief, technical_basis, risk, evidence, section_citations
           ) VALUES (
-            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19
           )`,
           [
             `${id}:signal:${index + 1}`,
@@ -165,6 +183,7 @@ export const postgresBriefPublicationArchive: PublicationArchive = {
             signal.productOpportunity,
             signal.happened,
             signal.whyNow,
+            signal.whyInBrief,
             signal.technicalBasis,
             signal.risk,
             JSON.stringify(signal.evidence),

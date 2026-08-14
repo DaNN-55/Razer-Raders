@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createProfileGetHandler, createProfileModelsHandler, createProfilePutHandler, createProfileRollbackHandler, type ProfileRouteDependencies } from "../src/lib/radar/profile-route.ts";
+import { createProfileGetHandler, createProfileModelsHandler, createProfilePutHandler, createProfileReassessHandler, createProfileRollbackHandler, type ProfileRouteDependencies } from "../src/lib/radar/profile-route.ts";
 import type { RadarProfile } from "../src/lib/radar/radar-profile.ts";
 
 const profile: RadarProfile = {
@@ -86,4 +86,15 @@ test("Profile 模型发现只允许已认证的 Ollama 配置", async () => {
   assert.deepEqual(await (await models(request("POST", profile))).json(), { models: ["qwen3-local:8b"] });
   const compatible = { ...profile, runtime: { ...profile.runtime, baseUrl: "https://runtime.example/v1", kind: "compatible" as const } };
   assert.equal((await models(request("POST", compatible))).status, 400);
+});
+
+test("管理员可显式复评当前已评估待发布集合", async () => {
+  let requeued = 0;
+  const reassess = createProfileReassessHandler({
+    environment: { RADAR_ADMIN_TOKEN: "admin-token" },
+    requeue: async () => { requeued += 1; return 3; },
+  });
+  assert.equal((await reassess(request("POST", undefined, ""))).status, 401);
+  assert.deepEqual(await (await reassess(request("POST"))).json(), { requeuedCount: 3 });
+  assert.equal(requeued, 1);
 });

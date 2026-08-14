@@ -135,8 +135,9 @@ test("已完成的队列评估可作为日报的唯一发布输入", { concurren
   if (!assessmentTask) throw new Error("Fixture 缺少评估任务。");
   await postgresCandidateTaskArchive.completeAssessment({
     assessment: {
+      assessmentOutcome: "sufficient-for-ranking",
       builderValue: "试用",
-      citations: { happened: [digest.sourceUrl], technicalBasis: [digest.sourceUrl], whyNow: [digest.sourceUrl] },
+      citations: { happened: [digest.sourceUrl], summary: [digest.sourceUrl], technicalBasis: [digest.sourceUrl], whyNow: [digest.sourceUrl] },
       happened: "该项目近期出现。",
       productOpportunity: "待验证",
       risk: "需要验证。",
@@ -154,7 +155,7 @@ test("已完成的队列评估可作为日报的唯一发布输入", { concurren
   assert.deepEqual(ready?.[0]?.candidate.evidence.map((evidence) => evidence.sourceUrl), [digest.sourceUrl]);
 });
 
-test("模型明确跳过时持久化为已评估未入选", { concurrency: false }, async () => {
+test("Builder Value 的跳过仅作为排序信号，仍保留可发布 Assessment", { concurrency: false }, async () => {
   const input = candidate("github:openai/skip");
   await seed(input);
   const digest = await attachDigest(input.canonicalIdentifier);
@@ -165,11 +166,93 @@ test("模型明确跳过时持久化为已评估未入选", { concurrency: false
   const assessmentTask = await postgresCandidateTaskArchive.claimNext({ leaseMs: 1_000, now: new Date(now.getTime() + 1), workerId: "worker-b" });
   if (!assessmentTask) throw new Error("Fixture 缺少评估任务。");
   await postgresCandidateTaskArchive.completeAssessment({
-    assessment: { builderValue: "跳过", citations: { happened: [digest.sourceUrl], technicalBasis: [digest.sourceUrl], whyNow: [digest.sourceUrl] }, happened: "无可发布变化。", productOpportunity: "无", risk: "不适用。", summary: "不建议纳入。", technicalBasis: "证据不足以支持产品判断。", topics: ["开发工具"], whyNow: "当前窗口内复核。" },
+    assessment: { assessmentOutcome: "sufficient-for-ranking", builderValue: "跳过", citations: { happened: [digest.sourceUrl], summary: [digest.sourceUrl], technicalBasis: [digest.sourceUrl], whyNow: [digest.sourceUrl] }, happened: "未确认新的发布或能力变化。", productOpportunity: "无", risk: "需要验证真实工作流。", summary: "暂不建议优先投入的代码任务 Agent。", technicalBasis: "通过本地任务执行与审批门控制操作。", topics: ["开发工具"], whyNow: "对需要减少重复代码操作的开发者，可先观察其审批流程是否稳定。" },
     task: assessmentTask,
   });
   const state = await getDatabasePool().query<{ evaluation_status: string; lifecycle_status: string }>("SELECT lifecycle_status, evaluation_status FROM radar_candidates WHERE id = $1", [input.canonicalIdentifier]);
-  assert.deepEqual(state.rows, [{ evaluation_status: "not-selected", lifecycle_status: "已评估未入选" }]);
+  assert.deepEqual(state.rows, [{ evaluation_status: "ready", lifecycle_status: "已评估待发布" }]);
+});
+
+test("真实 PostgreSQL 将模型证据不足与运行时失败分开持久化", { concurrency: false }, async () => {
+  const input = candidate("github:openai/insufficient");
+  await seed(input);
+  const digest = await attachDigest(input.canonicalIdentifier);
+  await postgresCandidateTaskArchive.enqueueEnrichment({ candidate: input, configurationVersion: "profile@v1", runtimeId: "ollama:qwen3" });
+  const enrichment = await postgresCandidateTaskArchive.claimNext({ leaseMs: 1_000, now, workerId: "worker-a" });
+  if (!enrichment) throw new Error("Fixture 缺少补证任务。");
+  await postgresCandidateTaskArchive.completeEnrichment({ result: { candidateCanonicalIdentifier: input.canonicalIdentifier, digests: [digest], status: "enriched" }, task: enrichment });
+  const assessmentTask = await postgresCandidateTaskArchive.claimNext({ leaseMs: 1_000, now: new Date(now.getTime() + 1), workerId: "worker-b" });
+  if (!assessmentTask) throw new Error("Fixture 缺少评估任务。");
+  await postgresCandidateTaskArchive.completeAssessment({
+    assessment: { assessmentOutcome: "insufficient-evidence", assessmentReason: "Primary Evidence 未说明具体使用场景。" },
+    task: assessmentTask,
+  });
+
+  const [candidateState, taskState] = await Promise.all([
+    getDatabasePool().query<{ evaluation_status: string; lifecycle_status: string }>("SELECT lifecycle_status, evaluation_status FROM radar_candidates WHERE id = $1", [input.canonicalIdentifier]),
+    getDatabasePool().query<{ status: string }>("SELECT status FROM candidate_tasks WHERE id = $1", [assessmentTask.id]),
+  ]);
+  assert.deepEqual(candidateState.rows, [{ evaluation_status: "not-selected", lifecycle_status: "证据不足未入选" }]);
+  assert.deepEqual(taskState.rows, [{ status: "completed" }]);
+});
+
+test("人工复评只重新入队当前已评估待发布 Candidate", { concurrency: false }, async () => {
+  const input = candidate("github:openai/manual-reassessment");
+  await seed(input);
+  const digest = await attachDigest(input.canonicalIdentifier);
+  await postgresCandidateTaskArchive.enqueueEnrichment({ candidate: input, configurationVersion: "profile@v1", runtimeId: "ollama:qwen3" });
+  const enrichment = await postgresCandidateTaskArchive.claimNext({ leaseMs: 1_000, now, workerId: "worker-a" });
+  if (!enrichment) throw new Error("Fixture 缺少补证任务。");
+  await postgresCandidateTaskArchive.completeEnrichment({ result: { candidateCanonicalIdentifier: input.canonicalIdentifier, digests: [digest], status: "enriched" }, task: enrichment });
+  const assessmentTask = await postgresCandidateTaskArchive.claimNext({ leaseMs: 1_000, now: new Date(now.getTime() + 1), workerId: "worker-b" });
+  if (!assessmentTask) throw new Error("Fixture 缺少评估任务。");
+  await postgresCandidateTaskArchive.completeAssessment({
+    assessment: { assessmentOutcome: "sufficient-for-ranking", builderValue: "试用", citations: { happened: [digest.sourceUrl], summary: [digest.sourceUrl], technicalBasis: [digest.sourceUrl], whyNow: [digest.sourceUrl] }, happened: "未确认新的发布或能力变化。", productOpportunity: "待验证", risk: "需要验证真实工作流。", summary: "面向本地开发者的代码任务 Agent。", technicalBasis: "通过本地任务执行与审批门控制操作。", topics: ["开发工具"], whyNow: "需要在本地代码任务中减少重复操作的开发者，可以先用它验证审批流程。" },
+    task: assessmentTask,
+  });
+
+  assert.equal(await postgresCandidateTaskArchive.requeueReadyAssessments({ configurationVersion: "profile@v1", runtimeId: "ollama:qwen3" }), 1);
+  const manualEnrichment = await postgresCandidateTaskArchive.claimNext({ leaseMs: 1_000, now: new Date(now.getTime() + 2), workerId: "worker-c" });
+  if (!manualEnrichment) throw new Error("Fixture 缺少人工补证任务。");
+  await postgresCandidateTaskArchive.completeEnrichment({ result: { candidateCanonicalIdentifier: input.canonicalIdentifier, digests: [digest], status: "enriched" }, task: manualEnrichment });
+  const [candidateState, manualTasks, assessmentTasks] = await Promise.all([
+    getDatabasePool().query<{ evaluation_status: string; lifecycle_status: string }>("SELECT lifecycle_status, evaluation_status FROM radar_candidates WHERE id = $1", [input.canonicalIdentifier]),
+    getDatabasePool().query<{ configuration_version: string; runtime_id: string; status: string }>("SELECT configuration_version, runtime_id, status FROM candidate_tasks WHERE evidence_fingerprint LIKE 'manual-reassessment:%'"),
+    getDatabasePool().query<{ task_count: number }>("SELECT COUNT(*)::integer AS task_count FROM candidate_tasks WHERE candidate_id = $1 AND task_kind = 'assessment'", [input.canonicalIdentifier]),
+  ]);
+  assert.deepEqual(candidateState.rows, [{ evaluation_status: "queued", lifecycle_status: "评估中" }]);
+  assert.deepEqual(manualTasks.rows, [{ configuration_version: "profile@v1", runtime_id: "ollama:qwen3", status: "completed" }]);
+  assert.deepEqual(assessmentTasks.rows, [{ task_count: 2 }]);
+});
+
+test("运行时切换不会自动复评，但新 Discovery Evidence 会重新入队", { concurrency: false }, async () => {
+  const input = candidate("github:openai/reassessment-trigger");
+  await seed(input);
+  await postgresCandidateTaskArchive.enqueueEnrichment({ candidate: input, configurationVersion: "profile@v1", runtimeId: "ollama:qwen3" });
+  const initialTask = await postgresCandidateTaskArchive.claimNext({ leaseMs: 1_000, now, workerId: "worker-a" });
+  if (!initialTask) throw new Error("Fixture 缺少补证任务。");
+  await postgresCandidateTaskArchive.completeEnrichment({ result: { candidateCanonicalIdentifier: input.canonicalIdentifier, digests: [], status: "insufficient-evidence" }, task: initialTask });
+
+  await postgresCandidateTaskArchive.enqueueEnrichment({ candidate: input, configurationVersion: "profile@v2", runtimeId: "ollama:qwen4" });
+  const unchanged = await getDatabasePool().query<{ lifecycle_status: string; task_count: number }>(
+    `SELECT candidate.lifecycle_status, COUNT(task.id)::integer AS task_count
+    FROM radar_candidates candidate JOIN candidate_tasks task ON task.candidate_id = candidate.id
+    WHERE candidate.id = $1 GROUP BY candidate.id`,
+    [input.canonicalIdentifier],
+  );
+  assert.deepEqual(unchanged.rows, [{ lifecycle_status: "证据不足未入选", task_count: 1 }]);
+
+  const changedDiscovery: Candidate = {
+    ...input,
+    evidence: [{ ...input.evidence[0]!, sourceTitle: `${input.title} release`, sourceUrl: `${input.url}?release=2` }],
+  };
+  await postgresCandidateTaskArchive.enqueueEnrichment({ candidate: changedDiscovery, configurationVersion: "profile@v2", runtimeId: "ollama:qwen4" });
+  const [state, changedTask] = await Promise.all([
+    getDatabasePool().query<{ lifecycle_status: string }>("SELECT lifecycle_status FROM radar_candidates WHERE id = $1", [input.canonicalIdentifier]),
+    getDatabasePool().query<{ configuration_version: string; status: string }>("SELECT configuration_version, status FROM candidate_tasks WHERE candidate_id = $1 ORDER BY created_at DESC LIMIT 1", [input.canonicalIdentifier]),
+  ]);
+  assert.deepEqual(state.rows, [{ lifecycle_status: "待补证" }]);
+  assert.deepEqual(changedTask.rows, [{ configuration_version: "profile@v2", status: "queued" }]);
 });
 
 test("租约过期后旧 Worker 的完成写入不会覆盖新 Worker 的租约", { concurrency: false }, async () => {

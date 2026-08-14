@@ -13,13 +13,14 @@ type SignalRow = QueryResultRow & {
   priority: Signal["priority"];
   product_opportunity: Signal["productOpportunity"];
   risk: string;
-  section_citations: Partial<Record<"happened" | "technicalBasis" | "whyNow", string[]>>;
+  section_citations: Partial<Record<"happened" | "summary" | "technicalBasis" | "whyNow", string[]>>;
   sources: string[];
   state: Signal["state"];
   summary: string;
   technical_basis: string;
   title: string;
   topics: string[];
+  why_in_brief: string;
   why_now: string;
 };
 
@@ -56,7 +57,7 @@ export async function getLatestPublishedBrief(): Promise<PublishedBrief | null> 
 
   const signals = await database.query<SignalRow>(
     `SELECT id, display_index, state, priority, title, summary, topics, sources, builder_value, product_opportunity,
-      happened, why_now, technical_basis, risk, evidence, section_citations
+      happened, why_now, why_in_brief, technical_basis, risk, evidence, section_citations
     FROM radar_signals
     WHERE brief_id = $1
     ORDER BY display_index ASC`,
@@ -87,6 +88,7 @@ export async function getLatestPublishedBrief(): Promise<PublishedBrief | null> 
       technicalBasis: signal.technical_basis,
       title: signal.title,
       topics: signal.topics,
+      ...(signal.why_in_brief ? { whyInBrief: signal.why_in_brief } : {}),
       whyNow: signal.why_now,
     } satisfies Signal)),
   };

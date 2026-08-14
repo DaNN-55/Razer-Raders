@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { QueryResultRow } from "pg";
-import type { GroundedAssessment, ModelRuntime } from "./assessment-contract.ts";
-import { validateAssessment, type PublicationCandidate } from "./brief-publication.ts";
+import type { AssessmentWithContent, GroundedAssessment, ModelRuntime } from "./assessment-contract.ts";
+import { validateEvidenceFirstAssessment, type PublicationCandidate } from "./brief-publication.ts";
 import type { Candidate, SourceEvidence } from "./connectors/types.ts";
 import type { EvidenceDigest, EvidenceEnrichmentResult } from "./evidence-enrichment.ts";
 import { getDatabasePool, withTransaction } from "./database.ts";
@@ -14,6 +14,10 @@ export type CandidateLifecycleStatus = "待补证" | "补证中" | "评估中" |
 
 export type QueuedCandidate = Candidate & {
   primaryEvidence: readonly EvidenceDigest[];
+  rankingContext?: {
+    observationCount: number;
+    rankingScore: number;
+  };
 };
 
 export type ClaimedCandidateTask = {
@@ -53,6 +57,8 @@ type CandidateRow = QueryResultRow & {
   canonical_identifier: string;
   collected_at: Date;
   connector_id: Candidate["connectorId"];
+  observation_count: number;
+  ranking_score: number;
   signal_type: Candidate["signalType"];
   subject_canonical_identifier: string;
   title: string;
@@ -107,6 +113,18 @@ function emptyStatistics(): QueueStatistics {
   };
 }
 
+function selectionReason(task: ClaimedCandidateTask, assessment: GroundedAssessment) {
+  if (assessment.assessmentOutcome === "insufficient-evidence") return assessment.assessmentReason ?? "Primary Evidence 尚不足以支持发布资格。";
+  if (assessment.assessmentOutcome === "outside-radar-scope") return assessment.assessmentReason ?? "该 Candidate 超出当前 Radar 范围。";
+  const sourceCount = new Set(task.candidate.evidence.map((evidence) => evidence.connectorId)).size;
+  const observationCount = task.candidate.rankingContext?.observationCount ?? 1;
+  return `Primary Evidence 已说明具体工作流；${task.candidate.primaryEvidence.length} 条 Primary Evidence；${sourceCount} 个发现来源；第 ${observationCount} 次收集。`;
+}
+
+function priorityFor(builderValue?: AssessmentWithContent["builderValue"]): PublicationCandidate["priority"] {
+  return builderValue === "试用" ? "高优先级" : builderValue === "学习" ? "值得关注" : "持续观察";
+}
+
 export type CandidateTaskArchive = {
   claimNext: (input: { leaseMs: number; now: Date; workerId: string }) => Promise<ClaimedCandidateTask | null>;
   completeAssessment: (input: { assessment: GroundedAssessment; task: ClaimedCandidateTask }) => Promise<void>;
@@ -115,14 +133,22 @@ export type CandidateTaskArchive = {
   fail: (input: { errorMessage: string; task: ClaimedCandidateTask }) => Promise<"delayed" | "retryable">;
   getStatistics: (input: { cycleStartedAt: Date }) => Promise<QueueStatistics>;
   release: (input: { task: ClaimedCandidateTask }) => Promise<void>;
+  requeueReadyAssessments: (input: { configurationVersion: string; runtimeId: string }) => Promise<number>;
 };
 
 export const postgresCandidateTaskArchive: CandidateTaskArchive = {
   async enqueueEnrichment({ candidate, configurationVersion, force = false, runtimeId }) {
     const evidenceFingerprint = fingerprint(candidate.evidence.map((evidence) => [evidence.canonicalIdentifier, evidence.sourceTitle, evidence.sourceUrl]));
     await withTransaction(async (client) => {
-      const candidateState = await client.query<{ lifecycle_status: CandidateLifecycleStatus }>("SELECT lifecycle_status FROM radar_candidates WHERE id = $1", [candidate.canonicalIdentifier]);
-      if (candidateState.rows[0]?.lifecycle_status === "已评估待发布" && !force) return;
+      if (!force) {
+        const priorDiscovery = await client.query(
+          `SELECT 1 FROM candidate_tasks
+          WHERE candidate_id = $1 AND task_kind = 'enrichment' AND evidence_fingerprint = $2 AND status = 'completed'
+          LIMIT 1`,
+          [candidate.canonicalIdentifier, evidenceFingerprint],
+        );
+        if (priorDiscovery.rowCount) return;
+      }
       const queuedTask = await client.query(
         `INSERT INTO candidate_tasks (id, candidate_id, task_kind, status, evidence_fingerprint, configuration_version, runtime_id)
         VALUES ($1, $2, 'enrichment', 'queued', $3, $4, $5)
@@ -138,8 +164,8 @@ export const postgresCandidateTaskArchive: CandidateTaskArchive = {
       await client.query(
         `UPDATE radar_candidates
         SET lifecycle_status = '待补证', evaluation_status = 'queued', assessment_result = NULL, assessment_fingerprint = NULL, assessment_task_id = NULL, updated_at = NOW()
-        WHERE id = $1 AND (lifecycle_status <> '已评估待发布' OR $2)`,
-        [candidate.canonicalIdentifier, force],
+        WHERE id = $1`,
+        [candidate.canonicalIdentifier],
       );
     });
   },
@@ -188,7 +214,8 @@ export const postgresCandidateTaskArchive: CandidateTaskArchive = {
     const database = getDatabasePool();
     const [candidateResult, evidenceResult, digestResult] = await Promise.all([
       database.query<CandidateRow>(
-        `SELECT canonical_identifier, connector_id, signal_type, subject_canonical_identifier, title, source_url, last_collected_at AS collected_at
+        `SELECT canonical_identifier, connector_id, signal_type, subject_canonical_identifier, title, source_url, last_collected_at AS collected_at,
+          observation_count, ranking_score
         FROM radar_candidates WHERE id = $1`,
         [task.candidate_id],
       ),
@@ -229,6 +256,10 @@ export const postgresCandidateTaskArchive: CandidateTaskArchive = {
           trust: evidence.trust,
         } satisfies SourceEvidence)),
         primaryEvidence: digestResult.rows.map(asDigest),
+        rankingContext: {
+          observationCount: candidate.observation_count,
+          rankingScore: candidate.ranking_score,
+        },
         signalType: candidate.signal_type,
         subjectCanonicalIdentifier: candidate.subject_canonical_identifier,
         title: candidate.title,
@@ -255,7 +286,10 @@ export const postgresCandidateTaskArchive: CandidateTaskArchive = {
       );
       if (!completedTask.rowCount) return;
       if (result.status === "enriched") {
-        const assessmentFingerprint = fingerprint(result.digests.map((digest) => [digest.canonicalIdentifier, digest.contentFingerprint]));
+        const assessmentFingerprint = fingerprint({
+          primaryEvidence: result.digests.map((digest) => [digest.canonicalIdentifier, digest.contentFingerprint]),
+          ...(task.evidenceFingerprint.startsWith("manual-reassessment:") ? { manualReassessment: task.evidenceFingerprint } : {}),
+        });
         const assessmentTask = await client.query(
           `INSERT INTO candidate_tasks (id, candidate_id, task_kind, status, evidence_fingerprint, configuration_version, runtime_id)
           VALUES ($1, $2, 'assessment', 'queued', $3, $4, $5)
@@ -296,12 +330,18 @@ export const postgresCandidateTaskArchive: CandidateTaskArchive = {
         [task.id, task.workerId, task.claimedAt],
       );
       if (!completedTask.rowCount) return;
-      const selectedForPublication = assessment.builderValue !== "跳过";
+      const lifecycleStatus = assessment.assessmentOutcome === "insufficient-evidence"
+        ? "证据不足未入选"
+        : assessment.assessmentOutcome === "outside-radar-scope"
+          ? "已评估未入选"
+          : "已评估待发布";
+      const evaluationStatus = lifecycleStatus === "已评估待发布" ? "ready" : "not-selected";
       await client.query(
         `UPDATE radar_candidates
-        SET lifecycle_status = $2, evaluation_status = $3, assessment_result = $4, assessment_fingerprint = $5, assessment_task_id = $6, updated_at = NOW()
+        SET lifecycle_status = $2, evaluation_status = $3, assessment_result = $4, assessment_fingerprint = $5, assessment_task_id = $6,
+          priority = $7, selection_reason = $8, ranking_policy_version = 'evidence-first@v1', updated_at = NOW()
         WHERE id = $1`,
-        [task.candidate.canonicalIdentifier, selectedForPublication ? "已评估待发布" : "已评估未入选", selectedForPublication ? "ready" : "not-selected", JSON.stringify(assessment), task.evidenceFingerprint, task.id],
+        [task.candidate.canonicalIdentifier, lifecycleStatus, evaluationStatus, JSON.stringify(assessment), task.evidenceFingerprint, task.id, priorityFor(assessment.assessmentOutcome === "sufficient-for-ranking" ? assessment.builderValue : undefined), selectionReason(task, assessment)],
       );
     });
   },
@@ -371,6 +411,31 @@ export const postgresCandidateTaskArchive: CandidateTaskArchive = {
       );
     });
   },
+
+  async requeueReadyAssessments({ configurationVersion, runtimeId }) {
+    return withTransaction(async (client) => {
+      const candidates = await client.query<{ id: string }>(
+        `SELECT id FROM radar_candidates
+        WHERE lifecycle_status = '已评估待发布' AND evaluation_status = 'ready'
+        FOR UPDATE`,
+      );
+      for (const candidate of candidates.rows) {
+        await client.query(
+          `INSERT INTO candidate_tasks (id, candidate_id, task_kind, status, evidence_fingerprint, configuration_version, runtime_id)
+          VALUES ($1, $2, 'enrichment', 'queued', $3, $4, $5)`,
+          [randomUUID(), candidate.id, `manual-reassessment:${randomUUID()}`, configurationVersion, runtimeId],
+        );
+        await client.query(
+          `UPDATE radar_candidates
+          SET lifecycle_status = '待补证', evaluation_status = 'queued', assessment_result = NULL,
+            assessment_fingerprint = NULL, assessment_task_id = NULL, updated_at = NOW()
+          WHERE id = $1`,
+          [candidate.id],
+        );
+      }
+      return candidates.rowCount ?? 0;
+    });
+  },
 };
 
 function failureMessage(error: unknown) {
@@ -430,14 +495,14 @@ export function createCandidateTaskWorker(input: {
                 sourceUrl: evidence.sourceUrl,
               })),
               priority: "值得关注",
-              rankingPolicyVersion: "v0.1",
-              rankingScore: 0,
-              selectionReason: "持久化队列完成补证后进入评估。",
+              rankingPolicyVersion: "evidence-first@v1",
+              rankingScore: task.candidate.rankingContext?.rankingScore ?? 0,
+              selectionReason: "Primary Evidence 已完成补证，等待 Evidence-first Assessment。",
               signalState: "新出现",
               title: task.candidate.title,
             } satisfies PublicationCandidate;
             const assessment = await taskRuntime.assess(assessableCandidate, { signal: AbortSignal.timeout(Math.max(1, deadline - clock().getTime())) });
-            const validationError = validateAssessment(assessableCandidate, assessment);
+            const validationError = validateEvidenceFirstAssessment(assessableCandidate, assessment);
             if (validationError) throw new Error(validationError);
             await archive.completeAssessment({ assessment, task });
           }

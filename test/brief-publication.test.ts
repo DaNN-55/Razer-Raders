@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { GroundedAssessment, ModelRuntime } from "../src/lib/radar/assessment-contract.ts";
+import type { AssessmentWithContent, GroundedAssessment, ModelRuntime } from "../src/lib/radar/assessment-contract.ts";
 import { createBriefPublisher, createReadyBriefPublisher, type PublicationArchive, type PublicationCandidate, type ReadyPublicationAssessment } from "../src/lib/radar/brief-publication.ts";
 import { createArchiveRadarBrief } from "../src/lib/radar/brief-contract.ts";
 
@@ -124,6 +124,7 @@ test("固定 Runtime 通过质量门后发布含 Section Citation 与 Provenance
       technicalBasis: "该项目公开提供 TypeScript 源码。",
       title: "openai/codex",
       topics: ["开发工具"],
+      whyInBrief: "GitHub Trending 在 Observation Window 内新发现。",
       whyNow: "它在当前 Observation Window 内被收集。",
     }],
   });
@@ -140,7 +141,12 @@ test("固定 Runtime 通过质量门后发布含 Section Citation 与 Provenance
 test("日报只消费持久化完成的评估，不会再次调用模型", async () => {
   const archive = new InMemoryPublicationArchive([]);
   archive.readyAssessments = [{
-    assessment: validAssessment,
+    assessment: {
+      ...validAssessment,
+      assessmentOutcome: "sufficient-for-ranking",
+      citations: { ...validAssessment.citations, summary: ["https://github.com/openai/codex"] },
+      whyNow: "需要在本地代码任务中减少重复操作的 Builder，可以先用它验证审批流程。",
+    },
     candidate,
     configurationVersion: "profile@v1",
     runtimeId: "compatible:fixture",
@@ -330,7 +336,7 @@ test("缺少必填字段、无效结构或已有 Snapshot 时，发布流程不�
     isCitationAccessible: async () => true,
     runtime: runtimeFor({
       ...validAssessment,
-      citations: { ...validAssessment.citations, unsupported: { value: "not-an-array" } } as unknown as GroundedAssessment["citations"],
+      citations: { ...(validAssessment as AssessmentWithContent).citations, unsupported: { value: "not-an-array" } } as unknown as AssessmentWithContent["citations"],
     }),
   }).publishDailyBrief();
   assert.deepEqual(unexpectedCitationResult, { reason: "openai/codex：评估结构无效。", status: "rejected" });

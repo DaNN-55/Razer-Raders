@@ -11,7 +11,7 @@ export type RadarRetrievalFilter = {
   topic?: string;
 };
 
-export type RetrievedRadarSignal = Pick<Signal, "builderValue" | "evidence" | "happened" | "id" | "priority" | "productOpportunity" | "risk" | "sectionCitations" | "state" | "summary" | "technicalBasis" | "title" | "topics" | "whyNow"> & {
+export type RetrievedRadarSignal = Pick<Signal, "builderValue" | "evidence" | "happened" | "id" | "priority" | "productOpportunity" | "risk" | "sectionCitations" | "state" | "summary" | "technicalBasis" | "title" | "topics" | "whyInBrief" | "whyNow"> & {
   publishedAt: string;
   provenance: BriefProvenance;
   signalType: string;

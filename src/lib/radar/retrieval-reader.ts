@@ -24,6 +24,7 @@ type RetrievalRow = QueryResultRow & {
   technical_basis: string;
   title: string;
   topics: string[];
+  why_in_brief: string;
   why_now: string;
 };
 
@@ -49,7 +50,7 @@ export function createRadarRetrievalReader({ query }: { query: RadarRetrievalQue
       const result = await query(
         `SELECT
           signal.id, signal.state, signal.priority, signal.title, signal.summary, signal.topics,
-          signal.builder_value, signal.product_opportunity, signal.happened, signal.why_now,
+          signal.builder_value, signal.product_opportunity, signal.happened, signal.why_now, signal.why_in_brief,
           signal.technical_basis, signal.risk, signal.evidence, signal.section_citations,
           snapshot.published_at,
           snapshot.configuration_version AS provenance_configuration_version,
@@ -100,6 +101,7 @@ export function createRadarRetrievalReader({ query }: { query: RadarRetrievalQue
           technicalBasis: signal.technical_basis,
           title: signal.title,
           topics: signal.topics,
+          ...(signal.why_in_brief ? { whyInBrief: signal.why_in_brief } : {}),
           whyNow: signal.why_now,
         })),
       };

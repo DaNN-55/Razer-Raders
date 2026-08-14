@@ -6,13 +6,18 @@ export type AssessmentEvidence = {
   sourceUrl: string;
 };
 
-export type GroundedAssessment = {
+export type AssessmentOutcome = "insufficient-evidence" | "outside-radar-scope" | "sufficient-for-ranking";
+
+export type AssessmentCitations = {
+  happened: readonly string[];
+  summary?: readonly string[];
+  technicalBasis: readonly string[];
+  whyNow: readonly string[];
+};
+
+export type AssessmentWithContent = {
   builderValue: "试用" | "学习" | "跟进" | "跳过";
-  citations: {
-    happened: readonly string[];
-    technicalBasis: readonly string[];
-    whyNow: readonly string[];
-  };
+  citations: AssessmentCitations;
   happened: string;
   productOpportunity: "无" | "待验证" | "值得探索";
   risk: string;
@@ -21,6 +26,21 @@ export type GroundedAssessment = {
   topics: readonly string[];
   whyNow: string;
 };
+
+export type EvidenceFirstAssessment = AssessmentWithContent & {
+  assessmentOutcome: "sufficient-for-ranking";
+};
+
+export type DeferredAssessment = {
+  assessmentOutcome: "insufficient-evidence" | "outside-radar-scope";
+  assessmentReason: string;
+};
+
+export type LegacyAssessment = AssessmentWithContent & {
+  assessmentOutcome?: undefined;
+};
+
+export type GroundedAssessment = DeferredAssessment | EvidenceFirstAssessment | LegacyAssessment;
 
 export type AssessableCandidate = {
   evidence: readonly AssessmentEvidence[];

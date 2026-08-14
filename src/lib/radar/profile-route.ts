@@ -105,3 +105,18 @@ export function createProfileRollbackHandler(dependencies: Pick<ProfileRouteDepe
     }
   };
 }
+
+export function createProfileReassessHandler(dependencies: {
+  environment?: AdminEnvironment;
+  requeue: () => Promise<number>;
+}) {
+  return async function POST(request: Request): Promise<Response> {
+    const unauthorized = authorizationError(request, dependencies.environment);
+    if (unauthorized) return unauthorized;
+    try {
+      return Response.json({ requeuedCount: await dependencies.requeue() });
+    } catch (error) {
+      return errorResponse(error);
+    }
+  };
+}

@@ -75,14 +75,14 @@ async function collectConfiguredSources() {
 }
 
 async function publishDailyBriefIfConfigured() {
-  const profile = await getRequiredRadarProfile();
+  await getRequiredRadarProfile();
   const result = await createReadyBriefPublisher({
     archive: postgresBriefPublicationArchive,
     clock: () => new Date(),
     createBriefId: randomUUID,
     isCitationAccessible: (url) => createCitationAccessibilityCheck([url])(url),
-    maxAssessments: profile.runtime.maxAssessmentsPerCycle,
-    pipelineVersion: process.env.RADAR_PIPELINE_VERSION ?? "assessment-pipeline@v1",
+    maxAssessments: 15,
+    pipelineVersion: process.env.RADAR_PIPELINE_VERSION ?? "evidence-first-assessment@v1",
   }).publishDailyBrief();
   if (result.status === "published") console.log(`日报已发布：${result.signalCount} 个信号`);
   if (result.status === "delayed") console.error(`日报评估延迟：${result.reason}`);

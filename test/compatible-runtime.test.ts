@@ -53,6 +53,7 @@ test("Compatible Runtime 仅从环境读取凭证，并以 Chat Completions 生�
   assert.equal(requestedHeaders.get("authorization"), "Bearer instance-secret");
   assert.equal(requestedHeaders.get("content-type"), "application/json");
   assert.match(requestedBody, /openai\/codex/);
+  assert.ok("technicalBasis" in assessment);
   assert.equal(assessment.technicalBasis, "该项目使用 TypeScript。");
   assert.deepEqual(assessment.citations.whyNow, ["https://github.com/openai/codex"]);
   assert.match(requestedBody, /citations\.whyNow/);

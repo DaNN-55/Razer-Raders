@@ -1,4 +1,4 @@
-import type { AssessmentEvidence, GroundedAssessment, ModelRuntime } from "./assessment-contract.ts";
+import type { AssessmentEvidence, AssessmentWithContent, EvidenceFirstAssessment, GroundedAssessment, ModelRuntime } from "./assessment-contract.ts";
 import type { Priority, SignalState } from "../../components/radar-data.ts";
 import { getCstDay } from "./daily-publication-schedule.ts";
 import type { BriefProvenance } from "./brief-contract.ts";
@@ -15,20 +15,21 @@ export type PublicationCandidate = {
 };
 
 export type PublishedSignalInput = {
-  builderValue: GroundedAssessment["builderValue"];
+  builderValue: AssessmentWithContent["builderValue"];
   candidateId: string;
   evidence: readonly { label: string; source: string; url: string }[];
   happened: string;
   priority: Priority;
-  productOpportunity: GroundedAssessment["productOpportunity"];
+  productOpportunity: AssessmentWithContent["productOpportunity"];
   risk: string;
-  sectionCitations: GroundedAssessment["citations"];
+  sectionCitations: AssessmentWithContent["citations"];
   sources: readonly string[];
   state: SignalState;
   summary: string;
   technicalBasis: string;
   title: string;
   topics: readonly string[];
+  whyInBrief: string;
   whyNow: string;
 };
 
@@ -53,9 +54,15 @@ export type PublicationArchive = {
 };
 
 export type ReadyPublicationAssessment = {
-  assessment: GroundedAssessment;
+  assessment: EvidenceFirstAssessment;
   candidate: PublicationCandidate;
   configurationVersion: string;
+  ranking?: {
+    crossSourceCount: number;
+    lastCollectedAt?: string;
+    observationCount: number;
+    primaryEvidenceCount: number;
+  };
   runtimeId: string;
 };
 
@@ -66,9 +73,10 @@ export type PublicationResult =
   | { status: "already-published" };
 
 type CitationAccessibility = (url: string) => Promise<boolean>;
-type AssessmentResult = { assessment: GroundedAssessment; candidate: PublicationCandidate } | { candidate: PublicationCandidate; reason: string };
+type AssessmentResult = { assessment: AssessmentWithContent; candidate: PublicationCandidate } | { candidate: PublicationCandidate; reason: string };
 
 const citationSections = ["happened", "whyNow", "technicalBasis"] as const;
+const evidenceFirstCitationSections = ["summary", "happened", "whyNow", "technicalBasis"] as const;
 const runtimeAttemptLimit = 3;
 
 function isNonEmptyText(value: unknown): value is string {
@@ -79,8 +87,12 @@ function containsChinese(value: string) {
   return /\p{Script=Han}/u.test(value);
 }
 
-export function validateAssessment(candidate: PublicationCandidate, assessment: GroundedAssessment): string | null {
-  if (!assessment || typeof assessment !== "object" || !assessment.citations || typeof assessment.citations !== "object") return "评估结构无效。";
+function hasAssessmentContent(assessment: GroundedAssessment): assessment is AssessmentWithContent {
+  return assessment.assessmentOutcome !== "insufficient-evidence" && assessment.assessmentOutcome !== "outside-radar-scope";
+}
+
+function validateAssessmentContent(candidate: PublicationCandidate, assessment: AssessmentWithContent, requiredSections: readonly (keyof AssessmentWithContent["citations"])[]): string | null {
+  if (!assessment.citations || typeof assessment.citations !== "object") return "评估结构无效。";
   const requiredText = [
     ["summary", assessment.summary],
     ["happened", assessment.happened],
@@ -94,14 +106,15 @@ export function validateAssessment(candidate: PublicationCandidate, assessment: 
   if (!Array.isArray(assessment.topics) || assessment.topics.length === 0 || !assessment.topics.every(isNonEmptyText)) return "缺少必填字段：topics";
   if (!(["试用", "学习", "跟进", "跳过"] as const).includes(assessment.builderValue)) return "无效 Builder Value。";
   if (!(["无", "待验证", "值得探索"] as const).includes(assessment.productOpportunity)) return "无效 Product Opportunity。";
+  if ((assessment as EvidenceFirstAssessment).assessmentOutcome === "sufficient-for-ranking" && /(热度|排名|重复收集|被收集)/.test(assessment.whyNow)) return "为什么值得关注不能以热度或重复收集作为主要理由。";
 
   const citationKeys = Object.keys(assessment.citations);
-  if (citationKeys.length !== citationSections.length || citationKeys.some((key) => !citationSections.includes(key as typeof citationSections[number]))) {
+  if (citationKeys.length !== requiredSections.length || citationKeys.some((key) => !requiredSections.includes(key as never))) {
     return "评估结构无效。";
   }
 
   const evidenceUrls = new Set(candidate.evidence.map((evidence) => evidence.sourceUrl));
-  for (const section of citationSections) {
+  for (const section of requiredSections) {
     const citations = assessment.citations[section];
     if (!Array.isArray(citations) || citations.length === 0) return `缺少 ${section} 的事实引用。`;
     if (!citations.every(isNonEmptyText)) return `${section} 的事实引用结构无效。`;
@@ -110,7 +123,43 @@ export function validateAssessment(candidate: PublicationCandidate, assessment: 
   return null;
 }
 
-export function toPublishedSignal(candidate: PublicationCandidate, assessment: GroundedAssessment): PublishedSignalInput {
+export function validateAssessment(candidate: PublicationCandidate, assessment: GroundedAssessment): string | null {
+  if (!assessment || typeof assessment !== "object" || !hasAssessmentContent(assessment)) return "评估结构无效。";
+  return validateAssessmentContent(candidate, assessment, (assessment as EvidenceFirstAssessment).assessmentOutcome === "sufficient-for-ranking" ? evidenceFirstCitationSections : citationSections);
+}
+
+export function validateEvidenceFirstAssessment(candidate: PublicationCandidate, assessment: GroundedAssessment): string | null {
+  if (assessment.assessmentOutcome === "insufficient-evidence" || assessment.assessmentOutcome === "outside-radar-scope") {
+    return isNonEmptyText(assessment.assessmentReason) ? null : "缺少 assessmentReason。";
+  }
+  if (assessment.assessmentOutcome !== "sufficient-for-ranking") return "缺少或无效 assessmentOutcome。";
+  return validateAssessmentContent(candidate, assessment, evidenceFirstCitationSections);
+}
+
+const builderValueOrder: Record<AssessmentWithContent["builderValue"], number> = {
+  "试用": 0,
+  "学习": 1,
+  "跟进": 2,
+  "跳过": 3,
+};
+
+export function rankReadyAssessments(ready: readonly ReadyPublicationAssessment[]) {
+  return [...ready].sort((left, right) => {
+    const actionDifference = builderValueOrder[left.assessment.builderValue] - builderValueOrder[right.assessment.builderValue];
+    if (actionDifference) return actionDifference;
+    const primaryEvidenceDifference = (right.ranking?.primaryEvidenceCount ?? right.candidate.evidence.length) - (left.ranking?.primaryEvidenceCount ?? left.candidate.evidence.length);
+    if (primaryEvidenceDifference) return primaryEvidenceDifference;
+    const attentionDifference = right.candidate.rankingScore - left.candidate.rankingScore;
+    if (attentionDifference) return attentionDifference;
+    const recencyDifference = (right.ranking?.lastCollectedAt ?? "").localeCompare(left.ranking?.lastCollectedAt ?? "");
+    if (recencyDifference) return recencyDifference;
+    const observationDifference = (right.ranking?.observationCount ?? 0) - (left.ranking?.observationCount ?? 0);
+    if (observationDifference) return observationDifference;
+    return (right.ranking?.crossSourceCount ?? 0) - (left.ranking?.crossSourceCount ?? 0);
+  });
+}
+
+export function toPublishedSignal(candidate: PublicationCandidate, assessment: AssessmentWithContent): PublishedSignalInput {
   return {
     builderValue: assessment.builderValue,
     candidateId: candidate.canonicalIdentifier,
@@ -126,6 +175,7 @@ export function toPublishedSignal(candidate: PublicationCandidate, assessment: G
     technicalBasis: assessment.technicalBasis,
     title: candidate.title,
     topics: assessment.topics,
+    whyInBrief: candidate.selectionReason,
     whyNow: assessment.whyNow,
   };
 }
@@ -139,13 +189,13 @@ export function createReadyBriefPublisher(input: {
   pipelineVersion: string;
 }) {
   const { archive, clock, createBriefId, isCitationAccessible, pipelineVersion } = input;
-  const maxAssessments = input.maxAssessments ?? 10;
+  const maxAssessments = input.maxAssessments ?? 15;
   return {
     async publishDailyBrief(): Promise<PublicationResult> {
       const publishedAt = clock();
       const publicationDay = getCstDay(publishedAt);
       if (await archive.hasPublishedBrief(publicationDay)) return { status: "already-published" };
-      const ready = await archive.getReadyAssessments?.(maxAssessments) ?? [];
+      const ready = rankReadyAssessments(await archive.getReadyAssessments?.(maxAssessments) ?? []);
       if (!ready.length) return { reason: "Observation Window 内没有已评估待发布的 Candidate。", status: "rejected" };
       const first = ready[0]!;
       const publishable = ready.filter((item) => item.configurationVersion === first.configurationVersion
@@ -153,10 +203,10 @@ export function createReadyBriefPublisher(input: {
         && item.candidate.rankingPolicyVersion === first.candidate.rankingPolicyVersion);
       const signals: PublishedSignalInput[] = [];
       for (const { assessment, candidate } of publishable) {
-        const validationError = validateAssessment(candidate, assessment);
+        const validationError = validateEvidenceFirstAssessment(candidate, assessment);
         if (validationError) return { reason: `${candidate.title}：${validationError}`, status: "rejected" };
-        for (const section of citationSections) {
-          for (const citation of assessment.citations[section]) {
+        for (const section of evidenceFirstCitationSections) {
+          for (const citation of assessment.citations[section] ?? []) {
             if (!await isCitationAccessible(citation)) return { reason: `引用链接不可访问：${citation}`, status: "rejected" };
           }
         }
@@ -242,6 +292,7 @@ export function createBriefPublisher(input: {
       if (!assessment) {
         return { candidate, reason: `${latestError}（已重试 ${runtimeAttemptLimit} 次）` };
       }
+      if (!hasAssessmentContent(assessment)) return { candidate, reason: assessment.assessmentReason };
       return { assessment, candidate };
     };
     const results: AssessmentResult[] = new Array(candidates.length);
@@ -261,7 +312,7 @@ export function createBriefPublisher(input: {
       await archive.recordPipelineStage({ detail: failure.reason, publicationDay, stage: "assessment", status: "failed" });
       return { reason: `${failure.candidate.title}：${failure.reason}`, status: "delayed" };
     }
-    const assessments = results as { assessment: GroundedAssessment; candidate: PublicationCandidate }[];
+    const assessments = results as { assessment: AssessmentWithContent; candidate: PublicationCandidate }[];
 
     await archive.recordPipelineStage({ publicationDay, stage: "assessment", status: "succeeded" });
     await archive.recordPipelineStage({ publicationDay, stage: "validation", status: "started" });

@@ -343,6 +343,7 @@ function SignalDetail({ isSaved, mode, onToggleSaved, provenance, signal }: { is
     <div className="detail-inner">
       <div className="detail-grid">
         <div className="assessment-column">
+          <AssessmentSection title="一句判断" body={signal.summary} citations={signal.sectionCitations?.summary} />
           <AssessmentSection title="发生了什么" body={signal.happened} citations={signal.sectionCitations?.happened} />
           <AssessmentSection title="为什么现在值得关注" body={signal.whyNow} citations={signal.sectionCitations?.whyNow} />
           <AssessmentSection title="技术依据" body={signal.technicalBasis} citations={signal.sectionCitations?.technicalBasis} />
@@ -361,6 +362,7 @@ function SignalDetail({ isSaved, mode, onToggleSaved, provenance, signal }: { is
               </a>
             ))}
           </section>
+          {signal.whyInBrief ? <p className="provenance">入选原因：{signal.whyInBrief}</p> : null}
           <p className="provenance">评估依据：{provenance ? `${provenance.configurationVersion} · ${provenance.rankingPolicyVersion} · ${provenance.modelRuntimeId} · ${provenance.pipelineVersion} · 已发布 Brief Snapshot` : mode === "archive" ? "等待已发布 Snapshot 的 Pipeline Provenance" : "示例数据"}</p>
         </div>
       </div>

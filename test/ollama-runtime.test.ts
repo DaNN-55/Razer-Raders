@@ -52,6 +52,7 @@ test("Ollama Local Runtime 无需凭证，并以 Generate 输出同一结构化�
   assert.equal(request.stream, false);
   assert.equal(request.think, false);
   assert.match(request.prompt, /openai\/codex/);
+  assert.ok("technicalBasis" in assessment);
   assert.equal(assessment.technicalBasis, "该项目使用 TypeScript。");
   assert.deepEqual(assessment.citations.whyNow, ["https://github.com/openai/codex"]);
 });

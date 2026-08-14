@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { after, beforeEach, test } from "node:test";
-import type { GroundedAssessment, ModelRuntime } from "../../src/lib/radar/assessment-contract.ts";
+import type { AssessmentWithContent, GroundedAssessment, ModelRuntime } from "../../src/lib/radar/assessment-contract.ts";
 import { postgresBriefPublicationArchive } from "../../src/lib/radar/brief-publication-archive.ts";
 import { createBriefPublisher, type PublicationCandidate } from "../../src/lib/radar/brief-publication.ts";
 import { recordCollectionCycle } from "../../src/lib/radar/collection-stage-recorder.ts";
@@ -309,7 +309,7 @@ test("固定 Runtime 经真实 PostgreSQL 按日发布后，API 读取 Snapshot�
   }).publishDailyBrief();
 
   assert.deepEqual(result, { briefId: "brief-e2e-published", signalCount: 1, status: "published" });
-  const storedSignals = await getDatabasePool().query<{ section_citations: GroundedAssessment["citations"]; title: string }>(
+  const storedSignals = await getDatabasePool().query<{ section_citations: AssessmentWithContent["citations"]; title: string }>(
     "SELECT title, section_citations FROM radar_signals WHERE brief_id = $1",
     ["brief-e2e-published"],
   );
