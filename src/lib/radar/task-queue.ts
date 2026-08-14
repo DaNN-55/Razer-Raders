@@ -116,9 +116,10 @@ function emptyStatistics(): QueueStatistics {
 function selectionReason(task: ClaimedCandidateTask, assessment: GroundedAssessment) {
   if (assessment.assessmentOutcome === "insufficient-evidence") return assessment.assessmentReason ?? "Primary Evidence 尚不足以支持发布资格。";
   if (assessment.assessmentOutcome === "outside-radar-scope") return assessment.assessmentReason ?? "该 Candidate 超出当前 Radar 范围。";
+  if (!("builderValue" in assessment)) return "评估结果未提供 Builder 价值。";
   const sourceCount = new Set(task.candidate.evidence.map((evidence) => evidence.connectorId)).size;
   const observationCount = task.candidate.rankingContext?.observationCount ?? 1;
-  return `Primary Evidence 已说明具体工作流；${task.candidate.primaryEvidence.length} 条 Primary Evidence；${sourceCount} 个发现来源；第 ${observationCount} 次收集。`;
+  return `Builder 价值为“${assessment.builderValue}”；${task.candidate.primaryEvidence.length} 条 Primary Evidence；${sourceCount} 个发现来源；第 ${observationCount} 次收集；最近收集于 ${task.candidate.collectedAt}。`;
 }
 
 function priorityFor(builderValue?: AssessmentWithContent["builderValue"]): PublicationCandidate["priority"] {

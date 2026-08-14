@@ -153,6 +153,7 @@ test("已完成的队列评估可作为日报的唯一发布输入", { concurren
   assert.equal(ready?.length, 1);
   assert.equal(ready?.[0]?.assessment.summary, "值得小范围试用。");
   assert.deepEqual(ready?.[0]?.candidate.evidence.map((evidence) => evidence.sourceUrl), [digest.sourceUrl]);
+  assert.match(ready?.[0]?.candidate.selectionReason ?? "", /Builder 价值为“试用”/);
 });
 
 test("Builder Value 的跳过仅作为排序信号，仍保留可发布 Assessment", { concurrency: false }, async () => {

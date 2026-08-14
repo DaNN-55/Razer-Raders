@@ -15,7 +15,7 @@ import {
   SettingsIcon,
   SunIcon,
 } from "@/components/icons";
-import { getAssessmentBanner, getBriefHeading } from "@/components/brief-presentation";
+import { getAssessmentBanner, getBriefFormatLabel, getBriefHeading, getBriefPage, getSignalCardSections } from "@/components/brief-presentation";
 import { type Signal } from "@/components/radar-data";
 import { ProfileConfig } from "@/components/profile-config";
 import { type RadarBrief, type RadarConnector } from "@/lib/radar/brief";
@@ -93,6 +93,7 @@ export function RadarApp({ brief }: { brief: RadarBrief }) {
   const [selectedId, setSelectedId] = useState<string | null>(signals[0]?.id ?? null);
   const [topic, setTopic] = useState("全部主题");
   const [showPriority, setShowPriority] = useState(false);
+  const [pageIndex, setPageIndex] = useState(0);
   const [filterOpen, setFilterOpen] = useState(false);
   const savedSnapshot = useSyncExternalStore(subscribeToSavedSignals, getSavedSignalsSnapshot, getSavedSignalsServerSnapshot);
   const saved = useMemo(() => parseSavedSignals(savedSnapshot), [savedSnapshot]);
@@ -171,6 +172,11 @@ export function RadarApp({ brief }: { brief: RadarBrief }) {
             mode={mode}
             onCloseFilter={() => setFilterOpen(false)}
             onSelectSignal={(id) => setSelectedId(id)}
+            onPageChange={(nextPageIndex) => {
+              const page = getBriefPage(visibleSignals, nextPageIndex);
+              setPageIndex(page.pageIndex);
+              setSelectedId(page.signals[0]?.id ?? null);
+            }}
             onToggleSaved={toggleSaved}
             pendingCandidateCount={pendingCandidateCount}
             provenance={provenance}
@@ -178,10 +184,11 @@ export function RadarApp({ brief }: { brief: RadarBrief }) {
             saved={saved}
             selectedSignal={selectedSignal}
             showPriority={showPriority}
+            pageIndex={pageIndex}
             signals={visibleSignals}
             topic={topic}
-            onTogglePriority={() => setShowPriority((value) => !value)}
-            onTopicChange={setTopic}
+            onTogglePriority={() => { setShowPriority((value) => !value); setPageIndex(0); }}
+            onTopicChange={(nextTopic) => { setTopic(nextTopic); setPageIndex(0); }}
             topicOptions={topicOptions}
           />
         )}
@@ -227,6 +234,7 @@ function BriefView({
   hasAnySignals,
   mode,
   onCloseFilter,
+  onPageChange,
   onSelectSignal,
   onTogglePriority,
   onToggleSaved,
@@ -236,6 +244,7 @@ function BriefView({
   saved,
   selectedSignal,
   showPriority,
+  pageIndex,
   signals: visibleSignals,
   topic,
   onTopicChange,
@@ -248,6 +257,7 @@ function BriefView({
   hasAnySignals: boolean;
   mode: RadarBrief["mode"];
   onCloseFilter: () => void;
+  onPageChange: (pageIndex: number) => void;
   onSelectSignal: (id: string) => void;
   onTogglePriority: () => void;
   onToggleSaved: (id: string) => void;
@@ -257,11 +267,13 @@ function BriefView({
   saved: string[];
   selectedSignal: Signal | null;
   showPriority: boolean;
+  pageIndex: number;
   signals: Signal[];
   topic: string;
   onTopicChange: (topic: string) => void;
   topicOptions: readonly string[];
 }) {
+  const page = getBriefPage(visibleSignals, pageIndex);
   const presentation = { assessmentDelay, availability, hasPublishedSignals: hasAnySignals, pendingCandidateCount, visibleSignalCount: visibleSignals.length };
   const assessmentBanner = getAssessmentBanner(presentation);
 
@@ -269,14 +281,14 @@ function BriefView({
     <div className="brief-layout">
       <section className="brief-column">
         <header className="page-header">
-          <p className="eyeline">{formatPublishedAt(publishedAt)}</p>
+          <p className="eyeline brief-eyeline"><span>{formatPublishedAt(publishedAt)}</span>{provenance ? <span className="brief-format">{getBriefFormatLabel(provenance.pipelineVersion)}</span> : null}</p>
           <h1>{getBriefHeading(presentation)}</h1>
           <p>从 7 天观察窗口中筛出有证据、可行动的变化。未验证的判断会明确标注。</p>
           {assessmentBanner ? <p className="assessment-banner">{assessmentBanner}</p> : null}
         </header>
 
         <div className="signal-list" aria-label="今日雷达短名单">
-          {visibleSignals.length ? visibleSignals.map((signal) => (
+          {page.signals.length ? page.signals.map((signal) => (
             <div className="signal-cluster" key={signal.id}>
               <SignalRow
                 isSelected={signal.id === selectedSignal?.id}
@@ -287,6 +299,7 @@ function BriefView({
             </div>
           )) : <EmptySignals assessmentDelay={assessmentDelay} availability={availability} hasAnySignals={hasAnySignals} onReset={() => onTopicChange("全部主题")} pendingCandidateCount={pendingCandidateCount} />}
         </div>
+        {page.pageCount > 1 ? <nav aria-label="日报分页" className="brief-pagination"><button disabled={page.pageIndex === 0} onClick={() => onPageChange(page.pageIndex - 1)} type="button">上一页</button><span>第 {page.pageIndex + 1} / {page.pageCount} 页</span><button disabled={page.pageIndex === page.pageCount - 1} onClick={() => onPageChange(page.pageIndex + 1)} type="button">下一页</button></nav> : null}
       </section>
 
       <aside className={`filter-drawer ${filterOpen ? "is-open" : ""}`} aria-label="主题筛选">
@@ -343,11 +356,7 @@ function SignalDetail({ isSaved, mode, onToggleSaved, provenance, signal }: { is
     <div className="detail-inner">
       <div className="detail-grid">
         <div className="assessment-column">
-          <AssessmentSection title="一句判断" body={signal.summary} citations={signal.sectionCitations?.summary} />
-          <AssessmentSection title="发生了什么" body={signal.happened} citations={signal.sectionCitations?.happened} />
-          <AssessmentSection title="为什么现在值得关注" body={signal.whyNow} citations={signal.sectionCitations?.whyNow} />
-          <AssessmentSection title="技术依据" body={signal.technicalBasis} citations={signal.sectionCitations?.technicalBasis} />
-          <AssessmentSection title="风险与未知项" body={signal.risk} isRisk />
+          {getSignalCardSections(signal).map((section) => <AssessmentSection {...section} key={section.title} />)}
         </div>
         <div className="evidence-column">
           <div className="detail-verdicts">
@@ -362,7 +371,6 @@ function SignalDetail({ isSaved, mode, onToggleSaved, provenance, signal }: { is
               </a>
             ))}
           </section>
-          {signal.whyInBrief ? <p className="provenance">入选原因：{signal.whyInBrief}</p> : null}
           <p className="provenance">评估依据：{provenance ? `${provenance.configurationVersion} · ${provenance.rankingPolicyVersion} · ${provenance.modelRuntimeId} · ${provenance.pipelineVersion} · 已发布 Brief Snapshot` : mode === "archive" ? "等待已发布 Snapshot 的 Pipeline Provenance" : "示例数据"}</p>
         </div>
       </div>
@@ -370,8 +378,8 @@ function SignalDetail({ isSaved, mode, onToggleSaved, provenance, signal }: { is
   );
 }
 
-function AssessmentSection({ body, citations = [], isRisk = false, title }: { body: string; citations?: readonly string[]; isRisk?: boolean; title: string }) {
-  return <section className={`assessment-section ${isRisk ? "risk" : ""}`}><h3>{title}</h3><p>{body}</p>{citations.length > 0 ? <span className="section-citations">证据 {citations.map((citation) => <a href={citation} key={citation} rel="noreferrer" target="_blank">↗</a>)}</span> : null}</section>;
+function AssessmentSection({ body, citations = [], isRisk = false, isSelectionReason = false, title }: { body: string; citations?: readonly string[]; isRisk?: boolean; isSelectionReason?: boolean; title: string }) {
+  return <section className={`assessment-section ${isRisk ? "risk" : ""} ${isSelectionReason ? "selection-reason" : ""}`}><h3>{title}</h3><p>{body}</p>{citations.length > 0 ? <span className="section-citations">证据 {citations.map((citation) => <a href={citation} key={citation} rel="noreferrer" target="_blank">↗</a>)}</span> : null}</section>;
 }
 
 function FilterControls({ onTogglePriority, onTopicChange, showPriority, topic, topicOptions }: { onTogglePriority: () => void; onTopicChange: (topic: string) => void; showPriority: boolean; topic: string; topicOptions: readonly string[] }) {

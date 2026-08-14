@@ -1,5 +1,7 @@
 import type { Signal } from "../../components/radar-data.ts";
 
+export const MAX_DAILY_BRIEF_SIGNALS = 15;
+
 export type RadarConnector = {
   caption: string;
   detail?: string | null;

@@ -1,4 +1,7 @@
+import type { Signal } from "./radar-data.ts";
 import type { RadarBrief } from "../lib/radar/brief-contract.ts";
+
+export const DAILY_BRIEF_PAGE_SIZE = 5;
 
 type BriefPresentationInput = Pick<RadarBrief, "assessmentDelay" | "availability" | "pendingCandidateCount"> & {
   hasPublishedSignals: boolean;
@@ -22,4 +25,26 @@ export function getAssessmentBanner(input: BriefPresentationInput) {
     return `Assessment Delay：${detail} 未发布半成品日报，也未切换到其他模型。`;
   }
   return null;
+}
+
+export function getBriefPage<T>(signals: readonly T[], requestedPageIndex: number) {
+  const pageCount = Math.ceil(signals.length / DAILY_BRIEF_PAGE_SIZE);
+  const pageIndex = Math.min(Math.max(0, requestedPageIndex), Math.max(0, pageCount - 1));
+  const start = pageIndex * DAILY_BRIEF_PAGE_SIZE;
+  return { pageCount, pageIndex, signals: signals.slice(start, start + DAILY_BRIEF_PAGE_SIZE) };
+}
+
+export function getBriefFormatLabel(pipelineVersion: string | undefined) {
+  return pipelineVersion?.startsWith("evidence-first-assessment@") ? "证据补全版" : "旧版评估格式";
+}
+
+export function getSignalCardSections(signal: Signal) {
+  return [
+    { body: signal.summary, citations: signal.sectionCitations?.summary, title: "一句话判断" },
+    { body: signal.happened, citations: signal.sectionCitations?.happened, title: "发生了什么" },
+    { body: signal.whyNow, citations: signal.sectionCitations?.whyNow, title: "为什么值得关注" },
+    { body: signal.technicalBasis, citations: signal.sectionCitations?.technicalBasis, title: "它靠什么实现" },
+    { body: signal.risk, isRisk: true, title: "风险与未知" },
+    { body: signal.whyInBrief ?? "旧版 Snapshot 未保留可解释的入选依据。", isSelectionReason: true, title: "为什么它进入今日简报" },
+  ] as const;
 }

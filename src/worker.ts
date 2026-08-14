@@ -5,6 +5,7 @@ import { postgresBriefPublicationArchive } from "./lib/radar/brief-publication-a
 import { postgresEvidenceDigestArchive } from "./lib/radar/evidence-digest-archive.ts";
 import { createEvidenceEnricher } from "./lib/radar/evidence-enrichment.ts";
 import { createReadyBriefPublisher } from "./lib/radar/brief-publication.ts";
+import { MAX_DAILY_BRIEF_SIGNALS } from "./lib/radar/brief-contract.ts";
 import { createCitationAccessibilityCheck } from "./lib/radar/citation-accessibility.ts";
 import { recordCollectionCycle } from "./lib/radar/collection-stage-recorder.ts";
 import { createDailyPublicationSchedule } from "./lib/radar/daily-publication-schedule.ts";
@@ -81,7 +82,7 @@ async function publishDailyBriefIfConfigured() {
     clock: () => new Date(),
     createBriefId: randomUUID,
     isCitationAccessible: (url) => createCitationAccessibilityCheck([url])(url),
-    maxAssessments: 15,
+    maxAssessments: MAX_DAILY_BRIEF_SIGNALS,
     pipelineVersion: process.env.RADAR_PIPELINE_VERSION ?? "evidence-first-assessment@v1",
   }).publishDailyBrief();
   if (result.status === "published") console.log(`日报已发布：${result.signalCount} 个信号`);

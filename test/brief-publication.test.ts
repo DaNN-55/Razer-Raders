@@ -165,6 +165,44 @@ test("日报只消费持久化完成的评估，不会再次调用模型", async
   assert.equal(archive.published?.provenance.modelRuntimeId, "compatible:fixture");
 });
 
+test("Evidence-first 日报冻结至多 15 条通过质量门的 Signal，不用低质量内容补齐", async () => {
+  for (const eligibleCount of [8, 15, 16]) {
+    const archive = new InMemoryPublicationArchive([]);
+    archive.readyAssessments = Array.from({ length: eligibleCount }, (_, index) => {
+      const url = `https://github.com/openai/codex-${index + 1}`;
+      return {
+        assessment: {
+          ...validAssessment,
+          assessmentOutcome: "sufficient-for-ranking",
+          citations: { happened: [url], summary: [url], technicalBasis: [url], whyNow: [url] },
+          whyNow: "需要在本地代码任务中减少重复操作的 Builder，可以先用它验证审批流程。",
+        },
+        candidate: {
+          ...candidate,
+          canonicalIdentifier: `github:openai/codex-${index + 1}`,
+          evidence: [{ canonicalIdentifier: `github:openai/codex-${index + 1}`, sourceName: "GitHub README", sourceTitle: `openai/codex-${index + 1}`, sourceUrl: url }],
+          selectionReason: `1 条 Primary Evidence；1 个发现来源；第 ${index + 1} 次收集。`,
+          title: `openai/codex-${index + 1}`,
+        },
+        configurationVersion: "profile@v1",
+        runtimeId: "compatible:fixture",
+      } satisfies ReadyPublicationAssessment;
+    });
+
+    const result = await createReadyBriefPublisher({
+      archive,
+      clock: () => new Date("2026-08-12T01:00:00.000Z"),
+      createBriefId: () => `brief-${eligibleCount}`,
+      isCitationAccessible: async () => true,
+      pipelineVersion: "evidence-first-assessment@v1",
+    }).publishDailyBrief();
+
+    assert.deepEqual(result, { briefId: `brief-${eligibleCount}`, signalCount: Math.min(eligibleCount, 15), status: "published" });
+    assert.equal(archive.requestedLimit, 15);
+    assert.deepEqual(archive.published?.signals.map((signal) => signal.candidateId), Array.from({ length: Math.min(eligibleCount, 15) }, (_, index) => `github:openai/codex-${index + 1}`));
+  }
+});
+
 test("发布器使用 Profile 指定的评估上限、并发和时间预算", async () => {
   const archive = new InMemoryPublicationArchive([candidate, candidate]);
   let active = 0;

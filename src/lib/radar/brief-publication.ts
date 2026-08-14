@@ -1,7 +1,7 @@
 import type { AssessmentEvidence, AssessmentWithContent, EvidenceFirstAssessment, GroundedAssessment, ModelRuntime } from "./assessment-contract.ts";
 import type { Priority, SignalState } from "../../components/radar-data.ts";
 import { getCstDay } from "./daily-publication-schedule.ts";
-import type { BriefProvenance } from "./brief-contract.ts";
+import { MAX_DAILY_BRIEF_SIGNALS, type BriefProvenance } from "./brief-contract.ts";
 
 export type PublicationCandidate = {
   canonicalIdentifier: string;
@@ -189,7 +189,7 @@ export function createReadyBriefPublisher(input: {
   pipelineVersion: string;
 }) {
   const { archive, clock, createBriefId, isCitationAccessible, pipelineVersion } = input;
-  const maxAssessments = input.maxAssessments ?? 15;
+  const maxAssessments = Math.min(input.maxAssessments ?? MAX_DAILY_BRIEF_SIGNALS, MAX_DAILY_BRIEF_SIGNALS);
   return {
     async publishDailyBrief(): Promise<PublicationResult> {
       const publishedAt = clock();

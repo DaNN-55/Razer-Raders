@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { signals } from "../src/components/radar-data.ts";
-import { getAssessmentBanner, getBriefHeading } from "../src/components/brief-presentation.ts";
+import { getAssessmentBanner, getBriefFormatLabel, getBriefHeading, getBriefPage, getSignalCardSections } from "../src/components/brief-presentation.ts";
 import { createArchiveRadarBrief, createUnpublishedRadarBrief } from "../src/lib/radar/brief-contract.ts";
 import { createBriefGetHandler } from "../src/lib/radar/brief-route.ts";
 
@@ -91,4 +91,32 @@ test("未配置数据库时，公开 Brief 不再回退到 Fixture", async () =>
     signals: [],
     topicOptions: ["全部主题"],
   });
+});
+
+test("首页将已发布 Snapshot 按固定五条分页，且不会重排内容", () => {
+  const baseSignal = signals[0];
+  if (!baseSignal) throw new Error("Fixture 缺少已发布 Radar Signal。");
+  const snapshot = Array.from({ length: 15 }, (_, index) => ({ ...baseSignal, id: `signal-${index + 1}`, index: String(index + 1).padStart(2, "0") }));
+
+  assert.deepEqual(getBriefPage(snapshot, 0), { pageCount: 3, pageIndex: 0, signals: snapshot.slice(0, 5) });
+  assert.deepEqual(getBriefPage(snapshot, 1), { pageCount: 3, pageIndex: 1, signals: snapshot.slice(5, 10) });
+  assert.deepEqual(getBriefPage(snapshot, 2), { pageCount: 3, pageIndex: 2, signals: snapshot.slice(10, 15) });
+  assert.deepEqual(getBriefPage([...snapshot, { ...baseSignal, id: "signal-16", index: "16" }], 3), { pageCount: 4, pageIndex: 3, signals: [{ ...baseSignal, id: "signal-16", index: "16" }] });
+});
+
+test("Daily Brief 依据 Pipeline Provenance 标示新版或旧版评估格式", () => {
+  assert.equal(getBriefFormatLabel("evidence-first-assessment@v1"), "证据补全版");
+  assert.equal(getBriefFormatLabel("legacy-assessment@v1"), "旧版评估格式");
+  assert.equal(getBriefFormatLabel("assessment-pipeline@v1"), "旧版评估格式");
+});
+
+test("Signal Card 固定使用六个不重复的 Evidence-first 段落，并将入选原因弱化为最后一段", () => {
+  const signal = signals[0];
+  if (!signal) throw new Error("Fixture 缺少已发布 Radar Signal。");
+  const sections = getSignalCardSections({ ...signal, whyInBrief: "Builder 价值为“试用”；2 条 Primary Evidence；3 个发现来源。" });
+
+  assert.deepEqual(sections.map((section) => section.title), ["一句话判断", "发生了什么", "为什么值得关注", "它靠什么实现", "风险与未知", "为什么它进入今日简报"]);
+  assert.equal(sections[0].body, signal.summary);
+  assert.equal(sections[5].isSelectionReason, true);
+  assert.equal(sections[5].body, "Builder 价值为“试用”；2 条 Primary Evidence；3 个发现来源。");
 });
