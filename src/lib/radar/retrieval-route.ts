@@ -22,7 +22,7 @@ function parseDate(value: string | null, name: "from" | "to") {
   return { value: date };
 }
 
-function getOptionalValue(params: URLSearchParams, key: "signalType" | "subject" | "topic") {
+function getOptionalValue(params: URLSearchParams, key: "query" | "signalType" | "subject" | "topic") {
   const value = params.get(key)?.trim();
   return value ? { value } : {};
 }
@@ -41,6 +41,7 @@ export function createRadarRetrievalGetHandler(reader: RadarRetrievalReader["ret
     if (from.value && to.value && from.value > to.value) return Response.json({ error: "from 不能晚于 to。" }, { status: 400 });
 
     const topic = getOptionalValue(parameters, "topic");
+    const query = getOptionalValue(parameters, "query");
     const signalType = getOptionalValue(parameters, "signalType");
     const subject = getOptionalValue(parameters, "subject");
     const filter: RadarRetrievalFilter = {
@@ -48,6 +49,7 @@ export function createRadarRetrievalGetHandler(reader: RadarRetrievalReader["ret
       offset: offset.value,
       ...(from.value ? { from: from.value } : {}),
       ...(to.value ? { to: to.value } : {}),
+      ...(query.value ? { query: query.value } : {}),
       ...(topic.value ? { topic: topic.value } : {}),
       ...(signalType.value ? { signalType: signalType.value } : {}),
       ...(subject.value ? { subject: subject.value } : {}),

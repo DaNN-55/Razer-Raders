@@ -41,6 +41,11 @@ export function createRadarRetrievalReader({ query }: { query: RadarRetrievalQue
       };
       if (filter.from) conditions.push(`snapshot.published_at >= ${addValue(filter.from)}`);
       if (filter.to) conditions.push(`snapshot.published_at <= ${addValue(filter.to)}`);
+      if (filter.query) {
+        const query = addValue(filter.query);
+        const searchableText = "concat_ws(' ', signal.title, signal.summary, signal.happened, signal.why_now, signal.technical_basis, subject.title, array_to_string(ARRAY(SELECT jsonb_array_elements_text(signal.topics)), ' '))";
+        conditions.push(`(to_tsvector('simple', ${searchableText}) @@ websearch_to_tsquery('simple', ${query}) OR ${searchableText} ILIKE '%' || ${query} || '%')`);
+      }
       if (filter.topic) conditions.push(`signal.topics @> jsonb_build_array(${addValue(filter.topic)}::text)`);
       if (filter.signalType) conditions.push(`candidate.signal_type = ${addValue(filter.signalType)}`);
       if (filter.subject) conditions.push(`subject.canonical_identifier = ${addValue(filter.subject)}`);

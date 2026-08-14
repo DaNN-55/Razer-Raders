@@ -13,13 +13,14 @@ test("Radar Retrieval API 将组合筛选与稳定分页传给只读检索边界
   const response = await createRadarRetrievalGetHandler(async (filter) => {
     receivedFilter = filter;
     return payload;
-  })(new Request("http://radar.local/api/retrieval?from=2026-08-10T00:00:00.000Z&to=2026-08-12T00:00:00.000Z&topic=%E5%BC%80%E5%8F%91%E5%B7%A5%E5%85%B7&signalType=project&subject=github%3Aopenai%2Fcodex&limit=10&offset=5"));
+  })(new Request("http://radar.local/api/retrieval?query=codex&from=2026-08-10T00:00:00.000Z&to=2026-08-12T00:00:00.000Z&topic=%E5%BC%80%E5%8F%91%E5%B7%A5%E5%85%B7&signalType=project&subject=github%3Aopenai%2Fcodex&limit=10&offset=5"));
 
   assert.equal(response.status, 200);
   assert.deepEqual(receivedFilter, {
     from: new Date("2026-08-10T00:00:00.000Z"),
     limit: 10,
     offset: 5,
+    query: "codex",
     signalType: "project",
     subject: "github:openai/codex",
     to: new Date("2026-08-12T00:00:00.000Z"),

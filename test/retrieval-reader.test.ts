@@ -45,6 +45,7 @@ test("Radar Retrieval 只查询已发布 Snapshot，并将组合过滤和稳定�
     from: new Date("2026-08-10T00:00:00.000Z"),
     limit: 10,
     offset: 5,
+    query: "codex agent",
     signalType: "project",
     subject: "github:openai/codex",
     to: new Date("2026-08-12T23:59:59.000Z"),
@@ -79,11 +80,14 @@ test("Radar Retrieval 只查询已发布 Snapshot，并将组合过滤和稳定�
     whyNow: "当前出现。",
   });
   assert.match(recordedQuery, /snapshot\.status = 'published'/);
+  assert.match(recordedQuery, /websearch_to_tsquery\('simple'/);
+  assert.match(recordedQuery, /ILIKE '%' \|\| \$3 \|\| '%'/);
   assert.match(recordedQuery, /signal\.topics @> jsonb_build_array/);
   assert.match(recordedQuery, /ORDER BY snapshot\.published_at DESC, signal\.id ASC/);
   assert.deepEqual(recordedValues, [
     new Date("2026-08-10T00:00:00.000Z"),
     new Date("2026-08-12T23:59:59.000Z"),
+    "codex agent",
     "开发工具",
     "project",
     "github:openai/codex",

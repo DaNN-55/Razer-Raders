@@ -928,6 +928,11 @@ test("Radar Retrieval 仅返回已发布 Archive，可组合筛选、稳定分�
     rankingPolicyVersion: "v0.1",
   });
 
+  const searchResponse = await fetch(`${baseUrl}/api/retrieval?query=codex`);
+  const search = await searchResponse.json();
+  assert.equal(searchResponse.status, 200);
+  assert.deepEqual(search.results.map((signal: { title: string }) => signal.title), ["openai/codex"]);
+
   const firstPage = await fetch(`${baseUrl}/api/retrieval?limit=1&offset=0`);
   const firstPagePayload = await firstPage.json();
   assert.equal(firstPagePayload.results[0]?.title, "openai/openai-agents-js");

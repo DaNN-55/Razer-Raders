@@ -18,6 +18,7 @@ import { getAssessmentBanner, getBriefCoverageLabel, getBriefFormatLabel, getBri
 import { type Signal } from "@/components/radar-data";
 import { ProfileConfig } from "@/components/profile-config";
 import { type BriefCoverageConnector, type RadarBrief, type RadarConnector } from "@/lib/radar/brief";
+import type { RadarRetrieval, RetrievedRadarSignal } from "@/lib/radar/retrieval-contract";
 
 type View = "brief" | "archive" | "config";
 type Theme = "dark" | "light";
@@ -190,7 +191,7 @@ export function RadarApp({ brief }: { brief: RadarBrief }) {
             topicOptions={topicOptions}
           />
         )}
-        {view === "archive" && <ArchiveView onSelect={(id) => { setSelectedId(id); setView("brief"); }} saved={saved} signals={signals} topicOptions={topicOptions} />}
+        {view === "archive" && <ArchiveView onToggleSaved={toggleSaved} saved={saved} />}
         {view === "config" && <ConfigView connectors={connectors} />}
       </section>
     </main>
@@ -403,18 +404,160 @@ function FilterControls({ onTogglePriority, onTopicChange, showPriority, topic, 
   </div>;
 }
 
-function ArchiveView({ onSelect, saved, signals, topicOptions }: { onSelect: (id: string) => void; saved: string[]; signals: readonly Signal[]; topicOptions: readonly string[] }) {
-  const [query, setQuery] = useState("");
-  const [topic, setTopic] = useState("全部主题");
-  const results = useMemo(() => signals.filter((signal) => {
-    const candidate = `${signal.title} ${signal.summary} ${signal.topics.join(" ")}`.toLowerCase();
-    return candidate.includes(query.toLowerCase()) && (topic === "全部主题" || signal.topics.includes(topic));
-  }), [query, signals, topic]);
+type ArchiveFilters = {
+  from: string;
+  query: string;
+  signalType: string;
+  subject: string;
+  to: string;
+  topic: string;
+};
+
+const ARCHIVE_PAGE_SIZE = 10;
+const emptyArchiveFilters: ArchiveFilters = { from: "", query: "", signalType: "", subject: "", to: "", topic: "" };
+const signalTypeOptions = [
+  { label: "全部类型", value: "" },
+  { label: "工具", value: "tool" },
+  { label: "模型", value: "model" },
+  { label: "概念", value: "concept" },
+  { label: "项目", value: "project" },
+  { label: "趋势", value: "trend" },
+] as const;
+
+function buildArchiveSearchParams(filters: ArchiveFilters, offset: number) {
+  const params = new URLSearchParams({ limit: String(ARCHIVE_PAGE_SIZE), offset: String(offset) });
+  if (filters.query.trim()) params.set("query", filters.query.trim());
+  if (filters.from) params.set("from", new Date(`${filters.from}T00:00:00.000+08:00`).toISOString());
+  if (filters.to) params.set("to", new Date(`${filters.to}T23:59:59.999+08:00`).toISOString());
+  if (filters.topic) params.set("topic", filters.topic);
+  if (filters.signalType) params.set("signalType", filters.signalType);
+  if (filters.subject.trim()) params.set("subject", filters.subject.trim());
+  return params;
+}
+
+function isRadarRetrieval(value: unknown): value is RadarRetrieval {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<RadarRetrieval>;
+  return (candidate.availability === "empty" || candidate.availability === "results")
+    && Array.isArray(candidate.results)
+    && typeof candidate.pagination?.hasMore === "boolean"
+    && typeof candidate.pagination?.limit === "number"
+    && typeof candidate.pagination?.offset === "number";
+}
+
+function archiveSignalToSignal(signal: RetrievedRadarSignal): Signal {
+  return {
+    ...signal,
+    index: "",
+    sources: [...new Set(signal.evidence.map((evidence) => evidence.source))],
+  };
+}
+
+function formatArchiveDate(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "未知日期";
+  return new Intl.DateTimeFormat("zh-CN", { day: "2-digit", month: "2-digit", timeZone: "Asia/Shanghai", year: "numeric" }).format(date);
+}
+
+function ArchiveView({ onToggleSaved, saved }: { onToggleSaved: (id: string) => void; saved: string[] }) {
+  const [draftFilters, setDraftFilters] = useState<ArchiveFilters>(emptyArchiveFilters);
+  const [filters, setFilters] = useState<ArchiveFilters>(emptyArchiveFilters);
+  const [filterError, setFilterError] = useState("");
+  const [offset, setOffset] = useState(0);
+  const [retryNonce, setRetryNonce] = useState(0);
+  const [retrieval, setRetrieval] = useState<RadarRetrieval | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [status, setStatus] = useState<"error" | "initial-loading" | "loading" | "ready">("initial-loading");
+  const [errorMessage, setErrorMessage] = useState("");
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    void fetch(`/api/retrieval?${buildArchiveSearchParams(filters, offset)}`, { signal: controller.signal })
+      .then(async (response) => {
+        const payload: unknown = await response.json().catch(() => null);
+        if (!response.ok) {
+          const detail = payload && typeof payload === "object" && "error" in payload && typeof payload.error === "string" ? payload.error : "Archive 暂时无法读取。";
+          throw new Error(detail);
+        }
+        if (!isRadarRetrieval(payload)) throw new Error("Archive 返回了无法识别的数据。");
+        setRetrieval(payload);
+        setSelectedId(null);
+        setStatus("ready");
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) return;
+        setErrorMessage(error instanceof Error ? error.message : "Archive 暂时无法读取。");
+        setStatus("error");
+      });
+
+    return () => controller.abort();
+  }, [filters, offset, retryNonce]);
+
+  const updateFilter = (name: keyof ArchiveFilters, value: string) => {
+    setDraftFilters((current) => ({ ...current, [name]: value }));
+  };
+  const submitFilters = () => {
+    if (draftFilters.from && draftFilters.to && draftFilters.from > draftFilters.to) {
+      setFilterError("开始日期不能晚于结束日期。");
+      return;
+    }
+    setFilterError("");
+    setFilters({ ...draftFilters });
+    setOffset(0);
+    setSelectedId(null);
+    setStatus("loading");
+  };
+  const resetFilters = () => {
+    setDraftFilters(emptyArchiveFilters);
+    setFilters(emptyArchiveFilters);
+    setFilterError("");
+    setOffset(0);
+    setSelectedId(null);
+    setStatus("loading");
+    setRetryNonce((value) => value + 1);
+  };
+
+  const resultStart = offset + 1;
+  const resultEnd = offset + (retrieval?.results.length ?? 0);
 
   return <section className="simple-page archive-page">
-    <header className="page-header"><p className="eyeline">Radar Archive · 示例档案</p><h1>在信号与证据中回看</h1><p>按关键词、时间与主题定位过往判断。MVP 使用结构化筛选与全文检索。</p></header>
-    <div className="archive-tools"><label><SearchIcon size={17} /><input onChange={(event) => setQuery(event.target.value)} placeholder="搜索模型、工具、概念…" value={query} /></label><select onChange={(event) => setTopic(event.target.value)} value={topic}>{topicOptions.map((option) => <option key={option}>{option}</option>)}</select></div>
-    <div className="archive-results">{results.map((signal) => <button className="archive-row" key={signal.id} onClick={() => onSelect(signal.id)} type="button"><span className="archive-date">08·12</span><span><strong>{signal.title}</strong><small>{signal.topics.join(" · ")} · {signal.state} · {signal.evidence.length} 条证据</small></span><span className="archive-right">{saved.includes(signal.id) ? "已保存" : signal.priority}<ChevronIcon size={16} /></span></button>)}</div>
+    <header className="page-header"><p className="eyeline">Radar Archive · 已发布历史</p><h1>在信号与证据中回看</h1><p>从已发布 Brief Snapshot 检索历史 Radar Signal，并按日期与领域条件缩小结果。</p></header>
+    <form className="archive-filter" onSubmit={(event) => { event.preventDefault(); submitFilters(); }}>
+      <label className="archive-search"><span>搜索</span><span className="archive-input"><SearchIcon size={17} /><input onChange={(event) => updateFilter("query", event.target.value)} placeholder="搜索模型、工具、概念…" value={draftFilters.query} /></span></label>
+      <div className="archive-filter-grid">
+        <label><span>开始日期</span><input max={draftFilters.to || undefined} onChange={(event) => updateFilter("from", event.target.value)} type="date" value={draftFilters.from} /></label>
+        <label><span>结束日期</span><input min={draftFilters.from || undefined} onChange={(event) => updateFilter("to", event.target.value)} type="date" value={draftFilters.to} /></label>
+        <label><span>Topic Tag</span><input onChange={(event) => updateFilter("topic", event.target.value)} placeholder="如 开发工具" value={draftFilters.topic} /></label>
+        <label><span>Signal Type</span><select onChange={(event) => updateFilter("signalType", event.target.value)} value={draftFilters.signalType}>{signalTypeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+        <label className="archive-subject"><span>Radar Subject</span><input onChange={(event) => updateFilter("subject", event.target.value)} placeholder="如 github:openai/codex" value={draftFilters.subject} /></label>
+      </div>
+      {filterError ? <p className="archive-filter-error" role="alert">{filterError}</p> : null}
+      <div className="archive-filter-actions"><button className="secondary-button" onClick={resetFilters} type="button">清除条件</button><button className="primary-button" type="submit">检索 Archive</button></div>
+    </form>
+
+    <div aria-live="polite" className="archive-status">
+      {status === "initial-loading" ? <div className="empty-state archive-state"><RadarIcon size={28} /><h2>正在读取 Radar Archive</h2><p>正在载入已发布的历史 Radar Signal…</p></div> : null}
+      {status === "loading" ? <div className="empty-state archive-state"><RadarIcon size={28} /><h2>正在更新检索结果</h2><p>正在应用搜索、筛选与分页条件…</p></div> : null}
+      {status === "error" ? <div className="empty-state archive-state is-error"><RadarIcon size={28} /><h2>无法读取 Radar Archive</h2><p>{errorMessage}</p><button className="secondary-button" onClick={() => { setStatus("loading"); setRetryNonce((value) => value + 1); }} type="button">重新读取</button></div> : null}
+      {status === "ready" && retrieval?.availability === "empty" ? <div className="empty-state archive-state"><ArchiveIcon size={28} /><h2>没有匹配的历史信号</h2><p>调整关键词、日期或分类条件后再试。</p><button className="secondary-button" onClick={resetFilters} type="button">清除筛选</button></div> : null}
+    </div>
+
+    {status === "ready" && retrieval?.availability === "results" ? <>
+      <p className="archive-result-summary">当前显示第 {resultStart}–{resultEnd} 项历史结果</p>
+      <div className="archive-results">{retrieval.results.map((signal) => {
+        const isSelected = selectedId === signal.id;
+        return <div className="archive-result" key={signal.id}>
+          <button aria-expanded={isSelected} className={`archive-row ${isSelected ? "is-selected" : ""}`} onClick={() => setSelectedId(isSelected ? null : signal.id)} type="button">
+            <span className="archive-date">{formatArchiveDate(signal.publishedAt)}</span>
+            <span className="archive-copy"><strong>{signal.title}</strong><span>{signal.summary}</span><small>{signal.subject.title} · {signal.signalType} · {signal.topics.join(" · ")} · {signal.state} · {signal.evidence.length} 条证据</small></span>
+            <span className="archive-right">{saved.includes(signal.id) ? "已保存" : signal.priority}<ChevronIcon size={16} /></span>
+          </button>
+          {isSelected ? <div className="archive-detail"><SignalDetail isSaved={saved.includes(signal.id)} mode="archive" onToggleSaved={() => onToggleSaved(signal.id)} provenance={signal.provenance} signal={archiveSignalToSignal(signal)} /></div> : null}
+        </div>;
+      })}</div>
+      <nav aria-label="Radar Archive 分页" className="brief-pagination"><button disabled={offset === 0} onClick={() => { setStatus("loading"); setOffset(Math.max(0, offset - ARCHIVE_PAGE_SIZE)); }} type="button">上一页</button><span>第 {Math.floor(offset / ARCHIVE_PAGE_SIZE) + 1} 页</span><button disabled={!retrieval.pagination.hasMore} onClick={() => { setStatus("loading"); setOffset(offset + ARCHIVE_PAGE_SIZE); }} type="button">下一页</button></nav>
+    </> : null}
   </section>;
 }
 

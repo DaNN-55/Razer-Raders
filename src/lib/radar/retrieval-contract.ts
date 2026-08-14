@@ -5,6 +5,7 @@ export type RadarRetrievalFilter = {
   from?: Date;
   limit: number;
   offset: number;
+  query?: string;
   signalType?: string;
   subject?: string;
   to?: Date;
