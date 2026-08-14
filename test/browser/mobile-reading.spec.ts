@@ -95,6 +95,32 @@ test("Builder 能在 390px Public Brief 中切换并展开 Signal Card", async (
   await expect(page.getByText("openai/mobile-brief-two 已发布到移动阅读验收 Fixture。")).toBeVisible();
 });
 
+test("Builder 在紧凑屏幕默认折叠 Signal Card，并可阅读证据、保存及查看来源覆盖", async ({ page }) => {
+  for (const width of [320, 390, 768, 1024]) {
+    await page.setViewportSize({ height: 844, width });
+    await page.goto("/");
+    await page.waitForTimeout(500);
+
+    await expect(page.getByRole("button", { name: /openai\/mobile-brief-one/ })).toBeVisible();
+    await expect(page.getByText("openai/mobile-brief-one 已发布到移动阅读验收 Fixture。")).toBeHidden();
+    await expect(page.getByText("openai/mobile-brief-two 已发布到移动阅读验收 Fixture。")).toBeHidden();
+    await expect(page.locator(".mobile-coverage [aria-label='本期来源覆盖度']")).toBeVisible();
+  }
+
+  await page.setViewportSize({ height: 844, width: 390 });
+  await page.getByRole("button", { name: /openai\/mobile-brief-one/ }).click();
+  await expect(page.getByText("openai/mobile-brief-one 已发布到移动阅读验收 Fixture。")).toBeVisible();
+  await expect(page.getByRole("link", { name: "openai/mobile-brief-one" })).toBeVisible();
+
+  const save = page.getByRole("button", { name: "保存信号" });
+  await save.click();
+  await expect(page.getByRole("button", { name: "取消保存" })).toBeVisible();
+
+  const mobileCoverage = page.locator(".mobile-coverage [aria-label='本期来源覆盖度']");
+  await mobileCoverage.getByText("查看来源状态").click();
+  await expect(mobileCoverage.getByText("GitHub Trending")).toBeVisible();
+});
+
 test("Builder 在紧凑视口可通过键盘应用并关闭 Topic Filter", async ({ page }) => {
   for (const width of [320, 390, 768, 1024]) {
     await page.setViewportSize({ height: 844, width });
@@ -132,4 +158,61 @@ test("Builder 在紧凑视口可通过键盘应用并关闭 Topic Filter", async
   await expect(filterDrawer).toBeVisible();
   await page.setViewportSize({ height: 844, width: 1121 });
   await expect(filterDrawer).toBeHidden();
+});
+
+test("Builder 可在紧凑屏幕的 Radar Archive 中通过 URL 保留检索与详情上下文", async ({ page }) => {
+  for (const width of [320, 390, 768, 1024]) {
+    await page.setViewportSize({ height: 844, width });
+    await page.goto("/");
+    await page.waitForTimeout(500);
+    await page.getByRole("navigation", { name: "移动端主导航" }).locator("button").nth(1).click();
+
+    await expect(page).toHaveURL(/view=archive/);
+    await expect(page.getByRole("heading", { name: "在信号与证据中回看" })).toBeVisible();
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  }
+
+  await page.setViewportSize({ height: 844, width: 390 });
+  await page.getByPlaceholder("搜索模型、工具、概念…").fill("mobile-brief-two");
+  await page.getByRole("button", { name: "检索 Archive" }).click();
+  await expect(page).toHaveURL(/archiveQuery=mobile-brief-two/);
+
+  await page.getByRole("button", { name: /openai\/mobile-brief-two/ }).click();
+  await expect(page).toHaveURL(/archiveSignal=/);
+  await expect(page.getByRole("heading", { name: "openai/mobile-brief-two", exact: true })).toBeVisible();
+
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "openai/mobile-brief-two", exact: true })).toBeVisible();
+
+  await page.goBack();
+  await expect(page).not.toHaveURL(/archiveSignal=/);
+  await expect(page.getByRole("heading", { name: "openai/mobile-brief-two", exact: true })).toBeHidden();
+  await expect(page.getByRole("button", { name: /openai\/mobile-brief-two/ })).toBeVisible();
+
+  await page.goForward();
+  await expect(page.getByRole("heading", { name: "openai/mobile-brief-two", exact: true })).toBeVisible();
+});
+
+test("Instance Administrator 可在紧凑屏幕加载并编辑 Profile，未授权写入会被保护", async ({ page }) => {
+  const unauthorized = await page.request.put("/api/profile", { data: {} });
+  expect(unauthorized.status()).toBe(401);
+
+  for (const width of [320, 390, 768, 1024]) {
+    await page.setViewportSize({ height: 844, width });
+    await page.goto("/?view=config");
+    await page.waitForTimeout(500);
+
+    await expect(page.getByRole("heading", { name: "Radar Profile" })).toBeVisible();
+    await expect(page.getByPlaceholder("RADAR_ADMIN_TOKEN")).toBeVisible();
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  }
+
+  await page.setViewportSize({ height: 844, width: 390 });
+  await page.getByPlaceholder("RADAR_ADMIN_TOKEN").fill("browser-e2e-admin-token");
+  await page.getByRole("button", { name: "加载配置" }).click();
+  await expect(page.getByText("来源连接器")).toBeVisible();
+
+  await page.getByRole("spinbutton", { name: "采集间隔（分钟）" }).fill("120");
+  await page.getByRole("button", { name: "校验并保存新版本" }).click();
+  await expect(page.getByText("Compatible API 凭据未由部署环境配置。")).toBeVisible();
 });

@@ -86,6 +86,24 @@ function getThemeServerSnapshot(): Theme {
   return "dark";
 }
 
+function getViewFromLocation(): View {
+  if (typeof window === "undefined") return "brief";
+  const view = new URLSearchParams(window.location.search).get("view");
+  return view === "archive" || view === "config" ? view : "brief";
+}
+
+function setViewLocation(nextView: View) {
+  const url = new URL(window.location.href);
+  if (nextView === "brief") {
+    url.searchParams.delete("view");
+    for (const key of archiveUrlKeys) url.searchParams.delete(key);
+  } else {
+    url.searchParams.set("view", nextView);
+    if (nextView !== "archive") for (const key of archiveUrlKeys) url.searchParams.delete(key);
+  }
+  window.history.pushState(null, "", url);
+}
+
 export function RadarApp({ brief }: { brief: RadarBrief }) {
   const { assessmentDelay, availability, connectors, coverage, mode, pendingCandidateCount, provenance, publishedAt, signals, topicOptions } = brief;
   const [view, setView] = useState<View>("brief");
@@ -104,8 +122,19 @@ export function RadarApp({ brief }: { brief: RadarBrief }) {
   }, [view]);
 
   useEffect(() => {
+    const restoreView = () => setView(getViewFromLocation());
+    restoreView();
+    window.addEventListener("popstate", restoreView);
+    return () => window.removeEventListener("popstate", restoreView);
+  }, []);
+
+  useEffect(() => {
     const compactViewport = window.matchMedia("(max-width: 1120px)");
-    const closeOutsideCompactViewport = () => { if (!compactViewport.matches) setFilterOpen(false); };
+    const closeOutsideCompactViewport = () => {
+      if (compactViewport.matches) setSelectedId(null);
+      else setFilterOpen(false);
+    };
+    closeOutsideCompactViewport();
     compactViewport.addEventListener("change", closeOutsideCompactViewport);
     return () => compactViewport.removeEventListener("change", closeOutsideCompactViewport);
   }, []);
@@ -128,6 +157,13 @@ export function RadarApp({ brief }: { brief: RadarBrief }) {
     requestAnimationFrame(() => filterTriggerRef.current?.focus());
   }, []);
 
+  const navigateToView = (nextView: View) => {
+    if (nextView === view) return;
+    setFilterOpen(false);
+    setViewLocation(nextView);
+    setView(nextView);
+  };
+
   const visibleSignals = useMemo(() => {
     return signals.filter((signal) => {
       const matchesTopic = topic === "全部主题" || signal.topics.includes(topic);
@@ -136,19 +172,19 @@ export function RadarApp({ brief }: { brief: RadarBrief }) {
     });
   }, [showPriority, signals, topic]);
 
-  const selectedSignal = signals.find((signal) => signal.id === selectedId) ?? visibleSignals[0] ?? signals[0];
+  const selectedSignal = selectedId ? signals.find((signal) => signal.id === selectedId) ?? null : null;
 
   return (
     <main className="app-shell" data-theme={theme}>
       <AmbientRadar />
       <aside className="sidebar" aria-label="主导航">
-        <button className="brand" onClick={() => setView("brief")} type="button">
+        <button className="brand" onClick={() => navigateToView("brief")} type="button">
           <RadarIcon size={22} />
           <span>Razer-Raders</span>
         </button>
         <nav className="nav-list">
           {NAV_ITEMS.map(({ id, label, Icon }) => (
-            <button className={`nav-item ${view === id ? "is-active" : ""}`} key={id} onClick={() => setView(id)} type="button">
+            <button className={`nav-item ${view === id ? "is-active" : ""}`} key={id} onClick={() => navigateToView(id)} type="button">
               <Icon size={18} />
               <span>{label}</span>
             </button>
@@ -162,7 +198,7 @@ export function RadarApp({ brief }: { brief: RadarBrief }) {
       </aside>
 
       <section className="mobile-header">
-        <button className="mobile-brand" onClick={() => setView("brief")} type="button"><RadarIcon size={20} /> Razer-Raders</button>
+        <button className="mobile-brand" onClick={() => navigateToView("brief")} type="button"><RadarIcon size={20} /> Razer-Raders</button>
         <div className="mobile-actions">
           <ThemeToggle compact onToggle={toggleTheme} theme={theme} />
           {view === "brief" && <button aria-controls="topic-filter-drawer" aria-expanded={filterOpen} aria-label="打开筛选条件" className="icon-button" onClick={() => setFilterOpen(true)} ref={filterTriggerRef} type="button"><MenuIcon /></button>}
@@ -170,7 +206,7 @@ export function RadarApp({ brief }: { brief: RadarBrief }) {
       </section>
 
       <nav className="mobile-nav" aria-label="移动端主导航">
-        {NAV_ITEMS.map(({ id, label, Icon }) => <button className={view === id ? "is-active" : ""} key={id} onClick={() => setView(id)} type="button"><Icon size={15} /><span>{label}</span></button>)}
+        {NAV_ITEMS.map(({ id, label, Icon }) => <button className={view === id ? "is-active" : ""} key={id} onClick={() => navigateToView(id)} type="button"><Icon size={15} /><span>{label}</span></button>)}
       </nav>
 
       <section className="main-content">
@@ -187,7 +223,7 @@ export function RadarApp({ brief }: { brief: RadarBrief }) {
             onPageChange={(nextPageIndex) => {
               const page = getBriefPage(visibleSignals, nextPageIndex);
               setPageIndex(page.pageIndex);
-              setSelectedId(page.signals[0]?.id ?? null);
+              setSelectedId(null);
             }}
             onToggleSaved={toggleSaved}
             pendingCandidateCount={pendingCandidateCount}
@@ -477,6 +513,7 @@ type ArchiveFilters = {
 
 const ARCHIVE_PAGE_SIZE = 10;
 const emptyArchiveFilters: ArchiveFilters = { from: "", query: "", signalType: "", subject: "", to: "", topic: "" };
+const archiveUrlKeys = ["archiveFrom", "archiveOffset", "archiveQuery", "archiveSignal", "archiveSignalType", "archiveSubject", "archiveTo", "archiveTopic"] as const;
 const signalTypeOptions = [
   { label: "全部类型", value: "" },
   { label: "工具", value: "tool" },
@@ -485,6 +522,47 @@ const signalTypeOptions = [
   { label: "项目", value: "project" },
   { label: "趋势", value: "trend" },
 ] as const;
+
+type ArchiveUrlState = { filters: ArchiveFilters; offset: number; selectedId: string | null };
+
+function readArchiveUrlState(): ArchiveUrlState {
+  if (typeof window === "undefined") return { filters: emptyArchiveFilters, offset: 0, selectedId: null };
+  const params = new URLSearchParams(window.location.search);
+  const rawOffset = params.get("archiveOffset");
+  const offset = rawOffset && /^\d+$/.test(rawOffset) ? Number(rawOffset) : 0;
+  return {
+    filters: {
+      from: params.get("archiveFrom") ?? "",
+      query: params.get("archiveQuery") ?? "",
+      signalType: params.get("archiveSignalType") ?? "",
+      subject: params.get("archiveSubject") ?? "",
+      to: params.get("archiveTo") ?? "",
+      topic: params.get("archiveTopic") ?? "",
+    },
+    offset: Number.isSafeInteger(offset) ? offset : 0,
+    selectedId: params.get("archiveSignal") || null,
+  };
+}
+
+function writeArchiveUrlState({ filters, offset, selectedId }: ArchiveUrlState) {
+  const url = new URL(window.location.href);
+  url.searchParams.set("view", "archive");
+  const values: Record<(typeof archiveUrlKeys)[number], string | null> = {
+    archiveFrom: filters.from || null,
+    archiveOffset: offset ? String(offset) : null,
+    archiveQuery: filters.query.trim() || null,
+    archiveSignal: selectedId,
+    archiveSignalType: filters.signalType || null,
+    archiveSubject: filters.subject.trim() || null,
+    archiveTo: filters.to || null,
+    archiveTopic: filters.topic || null,
+  };
+  for (const [key, value] of Object.entries(values)) {
+    if (value) url.searchParams.set(key, value);
+    else url.searchParams.delete(key);
+  }
+  window.history.pushState(null, "", url);
+}
 
 function buildArchiveSearchParams(filters: ArchiveFilters, offset: number) {
   const params = new URLSearchParams({ limit: String(ARCHIVE_PAGE_SIZE), offset: String(offset) });
@@ -533,15 +611,16 @@ function formatArchiveDate(value: string) {
 }
 
 function ArchiveView({ onToggleSaved, saved }: { onToggleSaved: (id: string) => void; saved: string[] }) {
-  const [draftFilters, setDraftFilters] = useState<ArchiveFilters>(emptyArchiveFilters);
-  const [filters, setFilters] = useState<ArchiveFilters>(emptyArchiveFilters);
+  const initialUrlState = readArchiveUrlState();
+  const [draftFilters, setDraftFilters] = useState<ArchiveFilters>(initialUrlState.filters);
+  const [filters, setFilters] = useState<ArchiveFilters>(initialUrlState.filters);
   const [filterError, setFilterError] = useState("");
-  const [offset, setOffset] = useState(0);
+  const [offset, setOffset] = useState(initialUrlState.offset);
   const [retryNonce, setRetryNonce] = useState(0);
   const [retrieval, setRetrieval] = useState<RadarRetrieval | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(initialUrlState.selectedId);
   const [detail, setDetail] = useState<RadarSignalDetail | null>(null);
-  const [detailStatus, setDetailStatus] = useState<"error" | "idle" | "loading" | "ready">("idle");
+  const [detailStatus, setDetailStatus] = useState<"error" | "idle" | "loading" | "ready">(initialUrlState.selectedId ? "loading" : "idle");
   const [detailError, setDetailError] = useState("");
   const [detailRetryNonce, setDetailRetryNonce] = useState(0);
   const [status, setStatus] = useState<"error" | "initial-loading" | "loading" | "ready">("initial-loading");
@@ -559,9 +638,6 @@ function ArchiveView({ onToggleSaved, saved }: { onToggleSaved: (id: string) => 
         }
         if (!isRadarRetrieval(payload)) throw new Error("Archive 返回了无法识别的数据。");
         setRetrieval(payload);
-        setSelectedId(null);
-        setDetail(null);
-        setDetailStatus("idle");
         setStatus("ready");
       })
       .catch((error: unknown) => {
@@ -572,6 +648,22 @@ function ArchiveView({ onToggleSaved, saved }: { onToggleSaved: (id: string) => 
 
     return () => controller.abort();
   }, [filters, offset, retryNonce]);
+
+  useEffect(() => {
+    const restoreArchiveState = () => {
+      const next = readArchiveUrlState();
+      setDraftFilters(next.filters);
+      setFilters(next.filters);
+      setOffset(next.offset);
+      setSelectedId(next.selectedId);
+      setDetail(null);
+      setDetailError("");
+      setDetailStatus(next.selectedId ? "loading" : "idle");
+      setStatus("loading");
+    };
+    window.addEventListener("popstate", restoreArchiveState);
+    return () => window.removeEventListener("popstate", restoreArchiveState);
+  }, []);
 
   useEffect(() => {
     if (!selectedId) return;
@@ -602,6 +694,7 @@ function ArchiveView({ onToggleSaved, saved }: { onToggleSaved: (id: string) => 
     setDetail(null);
     setDetailError("");
     setDetailStatus("idle");
+    writeArchiveUrlState({ filters, offset, selectedId: null });
   };
   const openDetail = (signalId: string) => {
     if (selectedId === signalId) {
@@ -612,6 +705,7 @@ function ArchiveView({ onToggleSaved, saved }: { onToggleSaved: (id: string) => 
     setDetail(null);
     setDetailError("");
     setDetailStatus("loading");
+    writeArchiveUrlState({ filters, offset, selectedId: signalId });
   };
 
   const updateFilter = (name: keyof ArchiveFilters, value: string) => {
@@ -625,17 +719,25 @@ function ArchiveView({ onToggleSaved, saved }: { onToggleSaved: (id: string) => 
     setFilterError("");
     setFilters({ ...draftFilters });
     setOffset(0);
-    closeDetail();
+    setSelectedId(null);
+    setDetail(null);
+    setDetailError("");
+    setDetailStatus("idle");
     setStatus("loading");
+    writeArchiveUrlState({ filters: draftFilters, offset: 0, selectedId: null });
   };
   const resetFilters = () => {
     setDraftFilters(emptyArchiveFilters);
     setFilters(emptyArchiveFilters);
     setFilterError("");
     setOffset(0);
-    closeDetail();
+    setSelectedId(null);
+    setDetail(null);
+    setDetailError("");
+    setDetailStatus("idle");
     setStatus("loading");
     setRetryNonce((value) => value + 1);
+    writeArchiveUrlState({ filters: emptyArchiveFilters, offset: 0, selectedId: null });
   };
 
   const resultStart = offset + 1;
@@ -683,7 +785,7 @@ function ArchiveView({ onToggleSaved, saved }: { onToggleSaved: (id: string) => 
           </div> : null}
         </div>;
       })}</div>
-      <nav aria-label="Radar Archive 分页" className="brief-pagination"><button disabled={offset === 0} onClick={() => { closeDetail(); setStatus("loading"); setOffset(Math.max(0, offset - ARCHIVE_PAGE_SIZE)); }} type="button">上一页</button><span>第 {Math.floor(offset / ARCHIVE_PAGE_SIZE) + 1} 页</span><button disabled={!retrieval.pagination.hasMore} onClick={() => { closeDetail(); setStatus("loading"); setOffset(offset + ARCHIVE_PAGE_SIZE); }} type="button">下一页</button></nav>
+      <nav aria-label="Radar Archive 分页" className="brief-pagination"><button disabled={offset === 0} onClick={() => { const nextOffset = Math.max(0, offset - ARCHIVE_PAGE_SIZE); setSelectedId(null); setDetail(null); setDetailStatus("idle"); setStatus("loading"); setOffset(nextOffset); writeArchiveUrlState({ filters, offset: nextOffset, selectedId: null }); }} type="button">上一页</button><span>第 {Math.floor(offset / ARCHIVE_PAGE_SIZE) + 1} 页</span><button disabled={!retrieval.pagination.hasMore} onClick={() => { const nextOffset = offset + ARCHIVE_PAGE_SIZE; setSelectedId(null); setDetail(null); setDetailStatus("idle"); setStatus("loading"); setOffset(nextOffset); writeArchiveUrlState({ filters, offset: nextOffset, selectedId: null }); }} type="button">下一页</button></nav>
     </> : null}
   </section>;
 }

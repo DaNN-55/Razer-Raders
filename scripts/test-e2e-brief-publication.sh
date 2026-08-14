@@ -32,7 +32,7 @@ done
 DATABASE_URL="$database_url" pnpm db:migrate
 pnpm build >/dev/null
 cp -R .next/static .next/standalone/.next/static
-DATABASE_URL="$database_url" HOSTNAME="127.0.0.1" PORT="$web_port" node .next/standalone/server.js >/tmp/razer-raders-e2e-web.log 2>&1 &
+DATABASE_URL="$database_url" RADAR_ADMIN_TOKEN="browser-e2e-admin-token" RADAR_COMPATIBLE_RUNTIME_API_KEY="" RADAR_MODEL_RUNTIME="compatible" HOSTNAME="127.0.0.1" PORT="$web_port" node .next/standalone/server.js >/tmp/razer-raders-e2e-web.log 2>&1 &
 web_pid="$!"
 
 attempt=0
