@@ -7,7 +7,7 @@ http_port="${RAZER_HTTPS_E2E_HTTP_PORT:-8082}"
 https_port="${RAZER_HTTPS_E2E_HTTPS_PORT:-8445}"
 
 compose_https() {
-  RAZER_PUBLIC_HOSTNAME="localhost" POSTGRES_PORT="$postgres_port" RAZER_HTTP_BIND_ADDRESS="127.0.0.1" RAZER_HTTP_PORT="$http_port" RAZER_HTTPS_BIND_ADDRESS="127.0.0.1" RAZER_HTTPS_PORT="$https_port" docker compose -p "$project_name" -f compose.yaml -f compose.https.yaml "$@"
+  COMPOSE_PARALLEL_LIMIT=1 RAZER_PUBLIC_HOSTNAME="localhost" POSTGRES_PORT="$postgres_port" RAZER_HTTP_BIND_ADDRESS="127.0.0.1" RAZER_HTTP_PORT="$http_port" RAZER_HTTPS_BIND_ADDRESS="127.0.0.1" RAZER_HTTPS_PORT="$https_port" docker compose -p "$project_name" -f compose.yaml -f compose.https.yaml "$@"
 }
 
 cleanup() {
@@ -17,10 +17,8 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 for service in migrate web worker; do
-  docker image inspect "razer-raders-${service}:latest" >/dev/null
-  docker tag "razer-raders-${service}:latest" "${project_name}-${service}:latest"
+  compose_https build "$service"
 done
-
 compose_https up --detach --no-build
 
 attempt=0
@@ -33,6 +31,15 @@ until curl --fail --silent --insecure "https://localhost:${https_port}/api/brief
   fi
   sleep 1
 done
+
+brief_page="$(curl --fail --silent --insecure "https://localhost:${https_port}/")"
+case "$brief_page" in
+  *Razer-Raders*) ;;
+  *)
+    echo "HTTPS Public Brief 页面未返回可识别内容。" >&2
+    exit 1
+    ;;
+esac
 
 web_binding="$(docker inspect --format '{{range .NetworkSettings.Ports}}{{if .}}{{range .}}{{.HostIp}}:{{.HostPort}}{{end}}{{end}}{{end}}' "$(compose_https ps -q web)")"
 if [ -n "$web_binding" ]; then
