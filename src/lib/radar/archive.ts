@@ -2,7 +2,7 @@ import type { QueryResultRow } from "pg";
 import type { Evidence, Signal } from "@/components/radar-data";
 import { getDatabasePool } from "@/lib/radar/database";
 import { createArchiveReader, type ArchiveQuery } from "@/lib/radar/archive-reader";
-import type { AssessmentState, PublishedBrief, RadarConnector } from "@/lib/radar/brief-contract";
+import type { AssessmentState, BriefCoverageConnector, PublishedBrief, RadarConnector } from "@/lib/radar/brief-contract";
 
 type SignalRow = QueryResultRow & {
   builder_value: Signal["builderValue"];
@@ -35,6 +35,14 @@ type BriefRow = QueryResultRow & {
   ranking_policy_version: string;
 };
 
+type BriefCoverageRow = QueryResultRow & {
+  connector_id: string;
+  is_enabled: boolean;
+  name: string;
+  status: string;
+  tone: string;
+};
+
 function createProductionArchiveReader() {
   const database = getDatabasePool();
   return createArchiveReader({
@@ -63,8 +71,29 @@ export async function getLatestPublishedBrief(): Promise<PublishedBrief | null> 
     ORDER BY display_index ASC`,
     [snapshot.id],
   );
+  const coverage = await database.query<BriefCoverageRow>(
+    `SELECT connector_id, name, status, tone, is_enabled
+    FROM brief_connector_health
+    WHERE brief_id = $1
+    ORDER BY CASE connector_id
+      WHEN 'github-trending' THEN 1
+      WHEN 'hugging-face-trending' THEN 2
+      WHEN 'show-hn' THEN 3
+      ELSE 4
+    END`,
+    [snapshot.id],
+  );
 
   return {
+    ...(coverage.rows.length ? {
+      coverage: coverage.rows.map((connector) => ({
+        connectorId: connector.connector_id,
+        isEnabled: connector.is_enabled,
+        name: connector.name,
+        status: connector.status,
+        tone: connector.tone,
+      } satisfies BriefCoverageConnector)),
+    } : {}),
     publishedAt: snapshot.published_at.toISOString(),
     provenance: {
       configurationVersion: snapshot.configuration_version,

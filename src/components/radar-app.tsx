@@ -15,10 +15,10 @@ import {
   SettingsIcon,
   SunIcon,
 } from "@/components/icons";
-import { getAssessmentBanner, getBriefFormatLabel, getBriefHeading, getBriefPage, getSignalCardSections } from "@/components/brief-presentation";
+import { getAssessmentBanner, getBriefCoverageLabel, getBriefFormatLabel, getBriefHeading, getBriefPage, getSignalCardSections } from "@/components/brief-presentation";
 import { type Signal } from "@/components/radar-data";
 import { ProfileConfig } from "@/components/profile-config";
-import { type RadarBrief, type RadarConnector } from "@/lib/radar/brief";
+import { type BriefCoverageConnector, type RadarBrief, type RadarConnector } from "@/lib/radar/brief";
 
 type View = "brief" | "archive" | "health" | "config";
 type Theme = "dark" | "light";
@@ -88,7 +88,7 @@ function getThemeServerSnapshot(): Theme {
 }
 
 export function RadarApp({ brief }: { brief: RadarBrief }) {
-  const { assessmentDelay, availability, connectors, mode, pendingCandidateCount, provenance, publishedAt, signals, topicOptions } = brief;
+  const { assessmentDelay, availability, connectors, coverage, mode, pendingCandidateCount, provenance, publishedAt, signals, topicOptions } = brief;
   const [view, setView] = useState<View>("brief");
   const [selectedId, setSelectedId] = useState<string | null>(signals[0]?.id ?? null);
   const [topic, setTopic] = useState("全部主题");
@@ -164,9 +164,9 @@ export function RadarApp({ brief }: { brief: RadarBrief }) {
       <section className="main-content">
         {view === "brief" && (
           <BriefView
-            connectors={connectors}
             availability={availability}
             assessmentDelay={assessmentDelay}
+            coverage={coverage}
             filterOpen={filterOpen}
             hasAnySignals={signals.length > 0}
             mode={mode}
@@ -229,7 +229,7 @@ function ThemeToggle({ compact = false, onToggle, theme }: { compact?: boolean; 
 function BriefView({
   availability,
   assessmentDelay,
-  connectors,
+  coverage,
   filterOpen,
   hasAnySignals,
   mode,
@@ -252,7 +252,7 @@ function BriefView({
 }: {
   availability: RadarBrief["availability"];
   assessmentDelay?: RadarBrief["assessmentDelay"];
-  connectors: readonly RadarConnector[];
+  coverage?: readonly BriefCoverageConnector[];
   filterOpen: boolean;
   hasAnySignals: boolean;
   mode: RadarBrief["mode"];
@@ -308,10 +308,7 @@ function BriefView({
       </aside>
 
       <aside className="utility-rail">
-        <section className="utility-section">
-          <div className="rail-title"><span>来源健康</span><small>最近一轮采集</small></div>
-          <ConnectorHealth connectors={connectors} compact />
-        </section>
+        {coverage?.length ? <BriefCoverageSummary coverage={coverage} /> : null}
         <section className="utility-section today-note">
           <div className="rail-title"><span>今日快照</span></div>
           <p><strong>整体信号强度：</strong>适中偏强</p>
@@ -326,6 +323,14 @@ function BriefView({
       </aside>
     </div>
   );
+}
+
+function BriefCoverageSummary({ coverage }: { coverage: readonly BriefCoverageConnector[] }) {
+  return <section aria-label="本期来源覆盖度" className="utility-section">
+    <div className="rail-title"><span>来源覆盖度</span><small>发布时快照</small></div>
+    <p className="coverage-summary">{getBriefCoverageLabel(coverage)}</p>
+    <small className="coverage-note">未启用来源不计入本期覆盖。</small>
+  </section>;
 }
 
 function SignalRow({ isSelected, onClick, signal }: { isSelected: boolean; onClick: () => void; signal: Signal }) {

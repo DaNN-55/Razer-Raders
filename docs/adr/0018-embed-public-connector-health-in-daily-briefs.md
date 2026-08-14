@@ -1,0 +1,3 @@
+# Embed public connector health in Daily Briefs
+
+The current single-instance product will remove its standalone Connector Health page and show a compact public Brief Coverage Summary in each Daily Brief instead. The summary shows aggregate coverage by default and lets readers reveal each source's publication-time state, but never exposes diagnostics or control actions. It is captured at publication, so historical briefs explain their own collection coverage rather than showing a later live status. A future, operator-only Operational Health Console may add run history, diagnostics, affected-output analysis, and authorized retries when the product has a demonstrated operational need for that scope.

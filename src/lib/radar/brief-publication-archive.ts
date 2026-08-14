@@ -25,6 +25,14 @@ type ReadyCandidateRow = CandidateRow & {
   runtime_id: string;
 };
 
+type CoverageRow = QueryResultRow & {
+  connector_id: string;
+  is_enabled: boolean;
+  name: string;
+  status: string;
+  tone: string;
+};
+
 function hasPublicationEvidence(value: CandidateRow): boolean {
   return Array.isArray(value.evidence)
       && value.evidence.length > 0
@@ -146,6 +154,24 @@ export const postgresBriefPublicationArchive: PublicationArchive = {
       const existing = await client.query("SELECT 1 FROM brief_snapshots WHERE status = 'published' AND publication_day = $1 LIMIT 1", [publicationDay]);
       if (existing.rowCount) return "already-published" as const;
 
+      const coverage = await client.query<CoverageRow>(
+        `SELECT health.connector_id, health.name, health.status, health.tone,
+          CASE WHEN profile.id IS NULL THEN health.status <> '未启用'
+            ELSE health.connector_id IN (
+              SELECT jsonb_array_elements_text(profile.configuration -> 'enabledConnectorIds')
+            )
+          END AS is_enabled
+        FROM connector_health health
+        LEFT JOIN radar_profile_versions profile ON profile.id = $1
+        ORDER BY CASE health.connector_id
+          WHEN 'github-trending' THEN 1
+          WHEN 'hugging-face-trending' THEN 2
+          WHEN 'show-hn' THEN 3
+          ELSE 4
+        END`,
+        [provenance.configurationVersion],
+      );
+
       await client.query(
         `INSERT INTO brief_snapshots (
           id, published_at, publication_day, status, configuration_version, ranking_policy_version, model_runtime_id, pipeline_version
@@ -160,6 +186,13 @@ export const postgresBriefPublicationArchive: PublicationArchive = {
           provenance.pipelineVersion,
         ],
       );
+      for (const connector of coverage.rows) {
+        await client.query(
+          `INSERT INTO brief_connector_health (brief_id, connector_id, name, status, tone, is_enabled)
+          VALUES ($1, $2, $3, $4, $5, $6)`,
+          [id, connector.connector_id, connector.name, connector.status, connector.tone, connector.is_enabled],
+        );
+      }
       for (const [index, signal] of signals.entries()) {
         await client.query(
           `INSERT INTO radar_signals (

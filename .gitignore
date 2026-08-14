@@ -4,5 +4,6 @@ out/
 .env
 .env.*
 !.env.example
+OPERATIONS.md
 *.tsbuildinfo
 next-env.d.ts

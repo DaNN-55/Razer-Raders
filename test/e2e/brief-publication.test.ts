@@ -382,6 +382,74 @@ test("固定 Runtime 经真实 PostgreSQL 按日发布后，API 读取 Snapshot�
   assert.deepEqual(brief.signals[0]?.evidence, [{ label: "openai/codex", source: "GitHub Trending", url: "https://github.com/openai/codex" }]);
 });
 
+test("Daily Brief 冻结发布时的来源覆盖度，不读取后续实时 Connector Health", { concurrency: false }, async () => {
+  const database = getDatabasePool();
+  await database.query(
+    `UPDATE connector_health
+    SET status = CASE connector_id
+      WHEN 'github-trending' THEN '新鲜'
+      WHEN 'hugging-face-trending' THEN '部分失败'
+      WHEN 'show-hn' THEN '未启用'
+    END,
+      tone = CASE connector_id
+        WHEN 'github-trending' THEN 'fresh'
+        WHEN 'hugging-face-trending' THEN 'delayed'
+        WHEN 'show-hn' THEN 'muted'
+      END,
+      detail = '内部采集详情不应写入 Brief Coverage Summary'`,
+  );
+
+  const result = await createBriefPublisher({
+    archive: postgresBriefPublicationArchive,
+    clock: () => new Date("2026-08-12T01:00:00.000Z"),
+    configurationVersion: "profile@v1",
+    createBriefId: () => "brief-e2e-coverage",
+    isCitationAccessible: async () => true,
+    pipelineVersion: "assessment-pipeline@v1",
+    runtime: fixedRuntime(validAssessment),
+  }).publishDailyBrief();
+
+  assert.deepEqual(result, { briefId: "brief-e2e-coverage", signalCount: 1, status: "published" });
+  const storedCoverage = await database.query<{
+    connector_id: string;
+    is_enabled: boolean;
+    name: string;
+    status: string;
+    tone: string;
+  }>(
+    "SELECT connector_id, name, status, tone, is_enabled FROM brief_connector_health WHERE brief_id = $1 ORDER BY connector_id",
+    ["brief-e2e-coverage"],
+  );
+  assert.deepEqual(storedCoverage.rows, [
+    { connector_id: "github-trending", is_enabled: true, name: "GitHub Trending", status: "新鲜", tone: "fresh" },
+    { connector_id: "hugging-face-trending", is_enabled: true, name: "Hugging Face", status: "部分失败", tone: "delayed" },
+    { connector_id: "show-hn", is_enabled: false, name: "Show HN", status: "未启用", tone: "muted" },
+  ]);
+
+  await database.query(
+    `UPDATE connector_health
+    SET status = CASE connector_id
+      WHEN 'github-trending' THEN '采集失败'
+      WHEN 'hugging-face-trending' THEN '新鲜'
+      WHEN 'show-hn' THEN '新鲜'
+    END,
+      tone = CASE connector_id
+        WHEN 'github-trending' THEN 'muted'
+        WHEN 'hugging-face-trending' THEN 'fresh'
+        WHEN 'show-hn' THEN 'fresh'
+      END`,
+  );
+
+  const response = await fetch(`${baseUrl}/api/brief`);
+  const brief = await response.json();
+  assert.equal(response.status, 200);
+  assert.deepEqual(brief.coverage, [
+    { connectorId: "github-trending", isEnabled: true, name: "GitHub Trending", status: "新鲜", tone: "fresh" },
+    { connectorId: "hugging-face-trending", isEnabled: true, name: "Hugging Face", status: "部分失败", tone: "delayed" },
+    { connectorId: "show-hn", isEnabled: false, name: "Show HN", status: "未启用", tone: "muted" },
+  ]);
+});
+
 test("无效固定 Runtime 被拒绝后，真实 Archive 不会产生 Snapshot", { concurrency: false }, async () => {
   const result = await createBriefPublisher({
     archive: postgresBriefPublicationArchive,

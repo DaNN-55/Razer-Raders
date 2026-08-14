@@ -9,7 +9,7 @@ import {
 import { createArchiveRadarBrief, createUnpublishedRadarBrief, type RadarBrief } from "@/lib/radar/brief-contract";
 import { isDatabaseConfigured } from "@/lib/radar/database";
 
-export { type RadarBrief, type RadarConnector } from "@/lib/radar/brief-contract";
+export { type BriefCoverageConnector, type RadarBrief, type RadarConnector } from "@/lib/radar/brief-contract";
 
 export async function getRadarBrief(): Promise<RadarBrief> {
   if (!isDatabaseConfigured()) return createUnpublishedRadarBrief(fixtureTopicOptions);

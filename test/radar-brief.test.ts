@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { signals } from "../src/components/radar-data.ts";
-import { getAssessmentBanner, getBriefFormatLabel, getBriefHeading, getBriefPage, getSignalCardSections } from "../src/components/brief-presentation.ts";
+import { getAssessmentBanner, getBriefCoverageLabel, getBriefFormatLabel, getBriefHeading, getBriefPage, getSignalCardSections } from "../src/components/brief-presentation.ts";
 import { createArchiveRadarBrief, createUnpublishedRadarBrief } from "../src/lib/radar/brief-contract.ts";
 import { createBriefGetHandler } from "../src/lib/radar/brief-route.ts";
 
@@ -25,6 +25,37 @@ test("已发布 Daily Brief 与新 Candidate 评估队列并存时，不会把�
   assert.deepEqual(brief.signals, [publishedSignal]);
   assert.equal(getBriefHeading({ ...brief, hasPublishedSignals: true, visibleSignalCount: 1 }), "今天，值得你分心的 1 个 AI 信号");
   assert.equal(getAssessmentBanner({ ...brief, hasPublishedSignals: true, visibleSignalCount: 1 }), "另有 2 个新 Candidate 正在评估，不会混入当前已发布日报。");
+});
+
+test("已发布 Daily Brief 保留发布时的 Brief Coverage Summary", () => {
+  const publishedSignal = signals[0];
+  if (!publishedSignal) throw new Error("Fixture 缺少已发布 Radar Signal。");
+  const coverage = [
+    { connectorId: "github-trending", isEnabled: true, name: "GitHub Trending", status: "新鲜", tone: "fresh" },
+    { connectorId: "show-hn", isEnabled: false, name: "Show HN", status: "未启用", tone: "muted" },
+  ];
+
+  const brief = createArchiveRadarBrief({
+    assessment: { candidateCount: 0, status: "unpublished" },
+    brief: {
+      coverage,
+      publishedAt: "2026-08-12T01:00:00.000Z",
+      provenance: { configurationVersion: "profile@v1", modelRuntimeId: "compatible:fixture", pipelineVersion: "assessment-pipeline@v1", rankingPolicyVersion: "v0.1" },
+      signals: [publishedSignal],
+    },
+    connectors: [],
+    topicOptions: ["全部主题"],
+  });
+
+  assert.deepEqual(brief.coverage, coverage);
+});
+
+test("Brief Coverage Summary 只统计新鲜的已启用来源", () => {
+  assert.equal(getBriefCoverageLabel([
+    { connectorId: "github-trending", isEnabled: true, name: "GitHub Trending", status: "新鲜", tone: "fresh" },
+    { connectorId: "hugging-face-trending", isEnabled: true, name: "Hugging Face", status: "部分失败", tone: "delayed" },
+    { connectorId: "show-hn", isEnabled: false, name: "Show HN", status: "未启用", tone: "muted" },
+  ]), "本期覆盖 1/2 个已启用来源");
 });
 
 test("Brief API 输出 evaluating 状态但只携带已发布 Snapshot", async () => {

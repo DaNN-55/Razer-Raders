@@ -1,5 +1,5 @@
 import type { Signal } from "./radar-data.ts";
-import type { RadarBrief } from "../lib/radar/brief-contract.ts";
+import type { BriefCoverageConnector, RadarBrief } from "../lib/radar/brief-contract.ts";
 
 export const DAILY_BRIEF_PAGE_SIZE = 5;
 
@@ -25,6 +25,12 @@ export function getAssessmentBanner(input: BriefPresentationInput) {
     return `Assessment Delay：${detail} 未发布半成品日报，也未切换到其他模型。`;
   }
   return null;
+}
+
+export function getBriefCoverageLabel(coverage: readonly BriefCoverageConnector[]) {
+  const enabled = coverage.filter((connector) => connector.isEnabled);
+  const completed = enabled.filter((connector) => connector.status === "新鲜");
+  return `本期覆盖 ${completed.length}/${enabled.length} 个已启用来源`;
 }
 
 export function getBriefPage<T>(signals: readonly T[], requestedPageIndex: number) {

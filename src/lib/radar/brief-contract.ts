@@ -10,6 +10,14 @@ export type RadarConnector = {
   tone: string;
 };
 
+export type BriefCoverageConnector = {
+  connectorId: string;
+  isEnabled: boolean;
+  name: string;
+  status: string;
+  tone: string;
+};
+
 export type BriefProvenance = {
   configurationVersion: string;
   modelRuntimeId: string;
@@ -21,6 +29,7 @@ export type RadarBrief = {
   assessmentDelay?: AssessmentDelay;
   availability: "assessment-delayed" | "evaluating" | "published" | "unpublished";
   connectors: readonly RadarConnector[];
+  coverage?: readonly BriefCoverageConnector[];
   mode: "fixture" | "archive";
   pendingCandidateCount: number;
   publishedAt: string;
@@ -40,6 +49,7 @@ export type AssessmentDelay = {
 };
 
 export type PublishedBrief = {
+  coverage?: readonly BriefCoverageConnector[];
   publishedAt: string;
   provenance: BriefProvenance;
   signals: readonly Signal[];
@@ -73,6 +83,7 @@ export function createArchiveRadarBrief(input: {
     availability: assessment.status === "assessment-delayed" ? "assessment-delayed" : assessment.status === "evaluating" ? "evaluating" : brief ? "published" : "unpublished",
     ...(assessmentDelay ? { assessmentDelay } : {}),
     connectors,
+    ...(brief?.coverage ? { coverage: brief.coverage } : {}),
     mode: "archive",
     pendingCandidateCount: assessment.candidateCount,
     publishedAt: brief?.publishedAt ?? new Date().toISOString(),
