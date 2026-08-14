@@ -9,7 +9,6 @@ import {
   FilterIcon,
   MenuIcon,
   MoonIcon,
-  PulseIcon,
   RadarIcon,
   SearchIcon,
   SettingsIcon,
@@ -20,13 +19,12 @@ import { type Signal } from "@/components/radar-data";
 import { ProfileConfig } from "@/components/profile-config";
 import { type BriefCoverageConnector, type RadarBrief, type RadarConnector } from "@/lib/radar/brief";
 
-type View = "brief" | "archive" | "health" | "config";
+type View = "brief" | "archive" | "config";
 type Theme = "dark" | "light";
 
 const NAV_ITEMS: { id: View; label: string; Icon: typeof RadarIcon }[] = [
   { id: "brief", label: "今日简报", Icon: RadarIcon },
   { id: "archive", label: "信号档案", Icon: ArchiveIcon },
-  { id: "health", label: "来源健康", Icon: PulseIcon },
   { id: "config", label: "配置后台", Icon: SettingsIcon },
 ];
 
@@ -193,7 +191,6 @@ export function RadarApp({ brief }: { brief: RadarBrief }) {
           />
         )}
         {view === "archive" && <ArchiveView onSelect={(id) => { setSelectedId(id); setView("brief"); }} saved={saved} signals={signals} topicOptions={topicOptions} />}
-        {view === "health" && <HealthView connectors={connectors} />}
         {view === "config" && <ConfigView connectors={connectors} />}
       </section>
     </main>
@@ -331,6 +328,12 @@ function BriefCoverageSummary({ coverage }: { coverage: readonly BriefCoverageCo
     <div className="rail-title"><span>来源覆盖度</span><small>发布时快照</small></div>
     <p className="coverage-summary">{getBriefCoverageLabel(coverage)}</p>
     <small className="coverage-note">未启用来源不计入本期覆盖。</small>
+    <details aria-label="查看本期来源状态" className="coverage-details">
+      <summary>查看来源状态</summary>
+      <div className="coverage-list">
+        {coverage.map((connector) => <div className="coverage-row" key={connector.connectorId}><span><i className={`connector-dot ${connector.tone}`} />{connector.name}</span><b className={connector.tone}>{connector.status}</b></div>)}
+      </div>
+    </details>
   </section>;
 }
 
@@ -400,12 +403,6 @@ function FilterControls({ onTogglePriority, onTopicChange, showPriority, topic, 
   </div>;
 }
 
-function ConnectorHealth({ compact = false, connectors }: { compact?: boolean; connectors: readonly RadarConnector[] }) {
-  return <div className={`connector-list ${compact ? "is-compact" : ""}`}>
-    {connectors.map((connector) => <div className="connector-row" key={connector.name}><span><i className={`connector-dot ${connector.tone}`} />{connector.name}{!compact && <small>{connector.detail ?? connector.caption}</small>}</span><b className={connector.tone}>{connector.status}</b></div>)}
-  </div>;
-}
-
 function ArchiveView({ onSelect, saved, signals, topicOptions }: { onSelect: (id: string) => void; saved: string[]; signals: readonly Signal[]; topicOptions: readonly string[] }) {
   const [query, setQuery] = useState("");
   const [topic, setTopic] = useState("全部主题");
@@ -418,16 +415,6 @@ function ArchiveView({ onSelect, saved, signals, topicOptions }: { onSelect: (id
     <header className="page-header"><p className="eyeline">Radar Archive · 示例档案</p><h1>在信号与证据中回看</h1><p>按关键词、时间与主题定位过往判断。MVP 使用结构化筛选与全文检索。</p></header>
     <div className="archive-tools"><label><SearchIcon size={17} /><input onChange={(event) => setQuery(event.target.value)} placeholder="搜索模型、工具、概念…" value={query} /></label><select onChange={(event) => setTopic(event.target.value)} value={topic}>{topicOptions.map((option) => <option key={option}>{option}</option>)}</select></div>
     <div className="archive-results">{results.map((signal) => <button className="archive-row" key={signal.id} onClick={() => onSelect(signal.id)} type="button"><span className="archive-date">08·12</span><span><strong>{signal.title}</strong><small>{signal.topics.join(" · ")} · {signal.state} · {signal.evidence.length} 条证据</small></span><span className="archive-right">{saved.includes(signal.id) ? "已保存" : signal.priority}<ChevronIcon size={16} /></span></button>)}</div>
-  </section>;
-}
-
-function HealthView({ connectors }: { connectors: readonly RadarConnector[] }) {
-  const unavailable = connectors.filter((connector) => connector.status !== "新鲜");
-
-  return <section className="simple-page health-page">
-    <header className="page-header"><p className="eyeline">Connector Health · 实例状态</p><h1>每一面雷达，都应说明新鲜度</h1><p>来源不可用时仍可发布简报，但会明确显示采集状态与最近成功时间。</p></header>
-    <ConnectorHealth connectors={connectors} />
-    <section className="health-note"><h2>当前状态说明</h2><p>{unavailable.length ? `尚未就绪的来源：${unavailable.map(({ name, status }) => `${name}（${status}）`).join("、")}。这些来源不会被当作已完整扫描。` : "所有已配置来源均已完成最近一次采集。"}</p></section>
   </section>;
 }
 

@@ -448,6 +448,21 @@ test("Daily Brief 冻结发布时的来源覆盖度，不读取后续实时 Conn
     { connectorId: "hugging-face-trending", isEnabled: true, name: "Hugging Face", status: "部分失败", tone: "delayed" },
     { connectorId: "show-hn", isEnabled: false, name: "Show HN", status: "未启用", tone: "muted" },
   ]);
+
+  const pageResponse = await fetch(baseUrl);
+  const page = await pageResponse.text();
+  const renderedMain = page.match(/<main[\s\S]*?<\/main>/)?.[0];
+  if (!renderedMain) throw new Error("Daily Brief 未返回主页面内容。");
+  assert.equal(pageResponse.status, 200);
+  assert.match(renderedMain, /<details[^>]*aria-label="查看本期来源状态"(?![^>]*\sopen)/);
+  assert.match(renderedMain, /查看来源状态/);
+  assert.match(renderedMain, /GitHub Trending/);
+  assert.match(renderedMain, /Hugging Face/);
+  assert.match(renderedMain, /Show HN/);
+  assert.match(renderedMain, /部分失败/);
+  assert.match(renderedMain, /未启用/);
+  assert.doesNotMatch(renderedMain, /内部采集详情不应写入 Brief Coverage Summary/);
+  assert.doesNotMatch(renderedMain, /来源健康/);
 });
 
 test("无效固定 Runtime 被拒绝后，真实 Archive 不会产生 Snapshot", { concurrency: false }, async () => {
