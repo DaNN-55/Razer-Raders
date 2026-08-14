@@ -3,6 +3,7 @@ import type { GroundedAssessment, ModelRuntime } from "../../src/lib/radar/asses
 import { postgresBriefPublicationArchive } from "../../src/lib/radar/brief-publication-archive.ts";
 import { createBriefPublisher, type PublicationCandidate } from "../../src/lib/radar/brief-publication.ts";
 import { getDatabasePool } from "../../src/lib/radar/database.ts";
+import { seedPublicationCandidate } from "../e2e/publication-fixture.ts";
 
 const candidates: PublicationCandidate[] = [
   {
@@ -48,57 +49,11 @@ function runtime(): ModelRuntime {
   };
 }
 
-async function seedCandidate(candidate: PublicationCandidate) {
-  const database = getDatabasePool();
-  const now = new Date("2026-08-14T01:00:00.000Z");
-  const evidence = candidate.evidence[0];
-  if (!evidence) throw new Error("Fixture Candidate 缺少 Source Evidence。");
-
-  await database.query(
-    "INSERT INTO radar_subjects (id, canonical_identifier, title, signal_type) VALUES ($1, $2, $3, $4)",
-    [`subject:${candidate.canonicalIdentifier}`, candidate.canonicalIdentifier, candidate.title, "project"],
-  );
-  await database.query(
-    `INSERT INTO radar_candidates (
-      id, canonical_identifier, subject_canonical_identifier, connector_id, subject_id, signal_type, title, source_url,
-      first_collected_at, last_collected_at, evaluation_status, signal_state, priority, ranking_score, ranking_policy_version,
-      observation_count, selection_reason
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9, 'evaluating', $10, $11, $12, $13, 1, $14)`,
-    [
-      candidate.canonicalIdentifier,
-      candidate.canonicalIdentifier,
-      candidate.canonicalIdentifier,
-      "github-trending",
-      `subject:${candidate.canonicalIdentifier}`,
-      "project",
-      candidate.title,
-      evidence.sourceUrl,
-      now,
-      candidate.signalState,
-      candidate.priority,
-      candidate.rankingScore,
-      candidate.rankingPolicyVersion,
-      candidate.selectionReason,
-    ],
-  );
-  const insertedEvidence = await database.query<{ id: number }>(
-    `INSERT INTO source_evidence (canonical_identifier, connector_id, source_name, source_title, source_url, collected_at, trust)
-    VALUES ($1, $2, $3, $4, $5, $6, 'untrusted') RETURNING id`,
-    [evidence.canonicalIdentifier, "github-trending", evidence.sourceName, evidence.sourceTitle, evidence.sourceUrl, now],
-  );
-  const evidenceId = insertedEvidence.rows[0]?.id;
-  if (evidenceId === undefined) throw new Error("Fixture 未能写入 Source Evidence。");
-  await database.query(
-    "INSERT INTO candidate_source_evidence (candidate_id, evidence_id, association) VALUES ($1, $2, 'primary')",
-    [candidate.canonicalIdentifier, evidenceId],
-  );
-}
-
 test.beforeEach(async () => {
   await getDatabasePool().query(
     "TRUNCATE TABLE pipeline_runs, radar_signals, brief_snapshots, candidate_evidence_digests, evidence_digests, candidate_source_evidence, source_evidence, radar_candidates, radar_subjects, radar_profile_state, radar_profile_versions RESTART IDENTITY CASCADE",
   );
-  await Promise.all(candidates.map(seedCandidate));
+  await Promise.all(candidates.map((candidate) => seedPublicationCandidate(candidate, new Date("2026-08-14T01:00:00.000Z"))));
   await createBriefPublisher({
     archive: postgresBriefPublicationArchive,
     clock: () => new Date("2026-08-14T01:00:00.000Z"),
@@ -117,8 +72,16 @@ test.afterAll(async () => {
 test("Builder 能在 390px Public Brief 中切换并展开 Signal Card", async ({ page }) => {
   await page.setViewportSize({ height: 844, width: 390 });
   await page.goto("/");
+  await page.waitForTimeout(500);
 
   await expect(page.getByRole("navigation", { name: "移动端主导航" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /openai\/mobile-brief-one/ })).toBeVisible();
+
+  const mobileNavigation = page.getByRole("navigation", { name: "移动端主导航" });
+  await mobileNavigation.locator("button").nth(1).click();
+  await expect(page.getByRole("heading", { name: "在信号与证据中回看" })).toBeVisible();
+
+  await mobileNavigation.locator("button").nth(0).click();
   await expect(page.getByRole("button", { name: /openai\/mobile-brief-one/ })).toBeVisible();
 
   await page.getByRole("button", { name: /openai\/mobile-brief-two/ }).click();

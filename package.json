@@ -12,6 +12,7 @@
     "test": "node --experimental-strip-types --test test/*.test.ts",
     "test:e2e": "./scripts/test-e2e-brief-publication.sh",
     "test:e2e:browser": "playwright test",
+    "test:https-edge": "./scripts/test-https-edge.sh",
     "db:migrate": "node --experimental-strip-types src/db/migrate.ts",
     "worker": "node --experimental-strip-types src/worker.ts",
     "worker:once": "RADAR_WORKER_ONCE=true node --experimental-strip-types src/worker.ts",

@@ -13,6 +13,7 @@ import { collectShowHn } from "../../src/lib/radar/connectors/show-hn.ts";
 import { createOllamaRuntimeFromEnvironment } from "../../src/lib/radar/ollama-runtime.ts";
 import { getActiveRadarProfile, listRadarProfileVersions, rollbackRadarProfile, saveRadarProfile } from "../../src/lib/radar/profile-archive.ts";
 import { createInitialRadarProfileConfig } from "../../src/lib/radar/radar-profile.ts";
+import { seedPublicationCandidate } from "./publication-fixture.ts";
 
 const candidate: PublicationCandidate = {
   canonicalIdentifier: "github:openai/codex",
@@ -65,107 +66,17 @@ function candidateAwareRuntime(id: string): ModelRuntime {
 }
 
 async function seedCandidate() {
-  const database = getDatabasePool();
-  const now = new Date();
-  await database.query(
-    "INSERT INTO radar_subjects (id, canonical_identifier, title, signal_type) VALUES ($1, $2, $3, $4)",
-    ["subject:github:openai/codex", candidate.canonicalIdentifier, candidate.title, "project"],
-  );
-  await database.query(
-    `INSERT INTO radar_candidates (
-      id, canonical_identifier, subject_canonical_identifier, connector_id, subject_id, signal_type, title, source_url,
-      first_collected_at, last_collected_at, evaluation_status, signal_state, priority, ranking_score, ranking_policy_version,
-      observation_count, selection_reason
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9, 'evaluating', $10, $11, $12, 'v0.1', 1, $13)`,
-    [
-      candidate.canonicalIdentifier,
-      candidate.canonicalIdentifier,
-      candidate.canonicalIdentifier,
-      "github-trending",
-      "subject:github:openai/codex",
-      "project",
-      candidate.title,
-      candidate.evidence[0]!.sourceUrl,
-      now,
-      candidate.signalState,
-      candidate.priority,
-      candidate.rankingScore,
-      candidate.selectionReason,
-    ],
-  );
-  const evidence = await database.query<{ id: number }>(
-    `INSERT INTO source_evidence (canonical_identifier, connector_id, source_name, source_title, source_url, collected_at, trust)
-    VALUES ($1, $2, $3, $4, $5, $6, 'untrusted') RETURNING id`,
-    [
-      candidate.evidence[0]!.canonicalIdentifier,
-      "github-trending",
-      candidate.evidence[0]!.sourceName,
-      candidate.evidence[0]!.sourceTitle,
-      candidate.evidence[0]!.sourceUrl,
-      now,
-    ],
-  );
-  const evidenceId = evidence.rows[0]?.id;
-  if (evidenceId === undefined) throw new Error("E2E Fixture 未能写入 Source Evidence。");
-  await database.query(
-    "INSERT INTO candidate_source_evidence (candidate_id, evidence_id, association) VALUES ($1, $2, 'primary')",
-    [candidate.canonicalIdentifier, evidenceId],
-  );
+  await seedPublicationCandidate(candidate);
 }
 
 async function seedSecondCandidate() {
-  const database = getDatabasePool();
   const secondCandidate: PublicationCandidate = {
     ...candidate,
     canonicalIdentifier: "github:openai/openai-agents-js",
     evidence: [{ canonicalIdentifier: "github:openai/openai-agents-js", sourceName: "GitHub Trending", sourceTitle: "openai/openai-agents-js", sourceUrl: "https://github.com/openai/openai-agents-js" }],
     title: "openai/openai-agents-js",
   };
-  const now = new Date();
-  await database.query(
-    "INSERT INTO radar_subjects (id, canonical_identifier, title, signal_type) VALUES ($1, $2, $3, $4)",
-    ["subject:github:openai/openai-agents-js", secondCandidate.canonicalIdentifier, secondCandidate.title, "project"],
-  );
-  await database.query(
-    `INSERT INTO radar_candidates (
-      id, canonical_identifier, subject_canonical_identifier, connector_id, subject_id, signal_type, title, source_url,
-      first_collected_at, last_collected_at, evaluation_status, signal_state, priority, ranking_score, ranking_policy_version,
-      observation_count, selection_reason
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9, 'evaluating', $10, $11, $12, 'v0.1', 1, $13)`,
-    [
-      secondCandidate.canonicalIdentifier,
-      secondCandidate.canonicalIdentifier,
-      secondCandidate.canonicalIdentifier,
-      "github-trending",
-      "subject:github:openai/openai-agents-js",
-      "project",
-      secondCandidate.title,
-      secondCandidate.evidence[0]!.sourceUrl,
-      now,
-      secondCandidate.signalState,
-      secondCandidate.priority,
-      secondCandidate.rankingScore,
-      secondCandidate.selectionReason,
-    ],
-  );
-  const evidence = await database.query<{ id: number }>(
-    `INSERT INTO source_evidence (canonical_identifier, connector_id, source_name, source_title, source_url, collected_at, trust)
-    VALUES ($1, $2, $3, $4, $5, $6, 'untrusted') RETURNING id`,
-    [
-      secondCandidate.evidence[0]!.canonicalIdentifier,
-      "github-trending",
-      secondCandidate.evidence[0]!.sourceName,
-      secondCandidate.evidence[0]!.sourceTitle,
-      secondCandidate.evidence[0]!.sourceUrl,
-      now,
-    ],
-  );
-  const evidenceId = evidence.rows[0]?.id;
-  if (evidenceId === undefined) throw new Error("E2E Fixture 未能写入第二条 Source Evidence。");
-  await database.query(
-    "INSERT INTO candidate_source_evidence (candidate_id, evidence_id, association) VALUES ($1, $2, 'primary')",
-    [secondCandidate.canonicalIdentifier, evidenceId],
-  );
+  await seedPublicationCandidate(secondCandidate);
 }
 
 async function seedUnpublishedCandidate() {
