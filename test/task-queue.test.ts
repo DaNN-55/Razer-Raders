@@ -114,6 +114,49 @@ test("队列 Worker 受配置并发限制，同时最多执行指定数量的任
   assert.equal(maximumActive, 2);
 });
 
+test("同一周期在两类任务均存在时为另一类任务保留执行机会", async () => {
+  const assessmentTask: ClaimedCandidateTask = {
+    ...enrichmentTask,
+    id: "task-assessment",
+    kind: "assessment",
+    candidate: {
+      ...enrichmentTask.candidate,
+      primaryEvidence: [{ canonicalIdentifier: "primary:github", contentFingerprint: "a".repeat(64), excerpts: ["Evidence"], fetchedAt: enrichmentTask.claimedAt, sourceKind: "github-repository-description", sourceName: "GitHub", sourceTitle: "codex", sourceUrl: enrichmentTask.candidate.url }],
+    },
+  };
+  const assessmentBacklog = { ...assessmentTask, id: "task-assessment-backlog" };
+  const tasks = [assessmentTask, assessmentBacklog, enrichmentTask];
+  const preferredKinds: Array<ClaimedCandidateTask["kind"] | undefined> = [];
+  const completed: string[] = [];
+  const archive: CandidateTaskArchive = {
+    claimNext: async ({ preferredKind }) => {
+      preferredKinds.push(preferredKind);
+      const index = preferredKind === undefined ? 0 : tasks.findIndex((task) => task.kind === preferredKind);
+      return tasks.splice(index < 0 ? 0 : index, 1)[0] ?? null;
+    },
+    completeAssessment: async ({ task }) => { completed.push(task.id); },
+    completeEnrichment: async ({ task }) => { completed.push(task.id); },
+    enqueueEnrichment: async () => undefined,
+    fail: async () => "retryable",
+    getStatistics: async () => ({ averageDurationMs: 0, completedThisCycle: 0, estimatedDrainCount: 0, estimatedDrainMs: 0, pendingByState: { "待补证": 0, "补证中": 0, "评估中": 0, "评估失败待重试": 0, "评估延迟": 0, "证据不足未入选": 0, "已评估未入选": 0, "已评估待发布": 0 }, retryCount: 0 }),
+    release: async () => undefined,
+    requeueReadyAssessments: async () => 0,
+  };
+  const worker = createCandidateTaskWorker({
+    archive,
+    clock: () => new Date("2026-08-13T01:00:00.000Z"),
+    enrich: async () => ({ candidateCanonicalIdentifier: enrichmentTask.candidate.canonicalIdentifier, digests: [], status: "insufficient-evidence" }),
+    maxTasks: 2,
+    runtime: { assess: async () => ({ assessmentOutcome: "insufficient-evidence", assessmentReason: "Primary Evidence 未说明具体使用场景。" }), id: "ollama:qwen3" },
+    timeBudgetMs: 10_000,
+    workerId: "worker-1",
+  });
+
+  assert.equal(await worker.runCycle(), 2);
+  assert.deepEqual(preferredKinds, [undefined, "enrichment"]);
+  assert.deepEqual(completed, ["task-assessment", "task-1"]);
+});
+
 test("未配置模型时仍执行补证，并释放不能评估的任务", async () => {
   const assessmentTask = { ...enrichmentTask, id: "task-assessment", kind: "assessment" as const, candidate: { ...enrichmentTask.candidate, primaryEvidence: [{ canonicalIdentifier: "primary:github", contentFingerprint: "a".repeat(64), excerpts: ["Evidence"], fetchedAt: enrichmentTask.claimedAt, sourceKind: "github-repository-description" as const, sourceName: "GitHub", sourceTitle: "codex", sourceUrl: enrichmentTask.candidate.url }] } };
   const tasks = [enrichmentTask, assessmentTask];

@@ -79,6 +79,42 @@ test("真实 PostgreSQL 按优先级原子领取，并在 Worker 租约过期后
   assert.deepEqual(state.rows, [{ lifecycle_status: "补证中" }]);
 });
 
+test("已补证的评估任务以 Primary Evidence 优先于低优先级补证任务", { concurrency: false }, async () => {
+  const readyForAssessment = candidate("github:openai/ready-for-assessment", 5);
+  const backlog = candidate("github:openai/enrichment-backlog", 1);
+  await seed(readyForAssessment, 5);
+  await seed(backlog, 1);
+  const digest = await attachDigest(readyForAssessment.canonicalIdentifier);
+  await postgresCandidateTaskArchive.enqueueEnrichment({ candidate: readyForAssessment, configurationVersion: "profile@v1", runtimeId: "ollama:qwen3" });
+
+  const enrichment = await postgresCandidateTaskArchive.claimNext({ leaseMs: 1_000, now, workerId: "worker-a" });
+  if (!enrichment) throw new Error("Fixture 缺少补证任务。");
+  await postgresCandidateTaskArchive.completeEnrichment({ result: { candidateCanonicalIdentifier: readyForAssessment.canonicalIdentifier, digests: [digest], status: "enriched" }, task: enrichment });
+  await postgresCandidateTaskArchive.enqueueEnrichment({ candidate: backlog, configurationVersion: "profile@v1", runtimeId: "ollama:qwen3" });
+
+  const next = await postgresCandidateTaskArchive.claimNext({ leaseMs: 1_000, now: new Date(now.getTime() + 1), workerId: "worker-b" });
+  assert.equal(next?.kind, "assessment");
+  assert.equal(next?.candidate.canonicalIdentifier, readyForAssessment.canonicalIdentifier);
+});
+
+test("真实 PostgreSQL 在同一周期为另一类任务保留领取机会", { concurrency: false }, async () => {
+  const readyForAssessment = candidate("github:openai/assessment-backlog", 5);
+  const enrichmentBacklog = candidate("github:openai/enrichment-backlog", 1);
+  await seed(readyForAssessment, 5);
+  await seed(enrichmentBacklog, 1);
+  const digest = await attachDigest(readyForAssessment.canonicalIdentifier);
+  await postgresCandidateTaskArchive.enqueueEnrichment({ candidate: readyForAssessment, configurationVersion: "profile@v1", runtimeId: "ollama:qwen3" });
+
+  const enrichment = await postgresCandidateTaskArchive.claimNext({ leaseMs: 1_000, now, workerId: "worker-a" });
+  if (!enrichment) throw new Error("Fixture 缺少补证任务。");
+  await postgresCandidateTaskArchive.completeEnrichment({ result: { candidateCanonicalIdentifier: readyForAssessment.canonicalIdentifier, digests: [digest], status: "enriched" }, task: enrichment });
+  await postgresCandidateTaskArchive.enqueueEnrichment({ candidate: enrichmentBacklog, configurationVersion: "profile@v1", runtimeId: "ollama:qwen3" });
+
+  const next = await postgresCandidateTaskArchive.claimNext({ leaseMs: 1_000, now: new Date(now.getTime() + 1), preferredKind: "enrichment", workerId: "worker-b" });
+  assert.equal(next?.kind, "enrichment");
+  assert.equal(next?.candidate.canonicalIdentifier, enrichmentBacklog.canonicalIdentifier);
+});
+
 test("模型任务三次失败后持久化为评估延迟，并保留错误和队列统计", { concurrency: false }, async () => {
   const input = candidate("github:openai/codex");
   await seed(input);

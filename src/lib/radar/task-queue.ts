@@ -127,7 +127,7 @@ function priorityFor(builderValue?: AssessmentWithContent["builderValue"]): Publ
 }
 
 export type CandidateTaskArchive = {
-  claimNext: (input: { leaseMs: number; now: Date; workerId: string }) => Promise<ClaimedCandidateTask | null>;
+  claimNext: (input: { leaseMs: number; now: Date; preferredKind?: CandidateTaskKind; workerId: string }) => Promise<ClaimedCandidateTask | null>;
   completeAssessment: (input: { assessment: GroundedAssessment; task: ClaimedCandidateTask }) => Promise<void>;
   completeEnrichment: (input: { result: EvidenceEnrichmentResult; task: ClaimedCandidateTask }) => Promise<void>;
   enqueueEnrichment: (input: { candidate: Candidate; configurationVersion: string; force?: boolean; runtimeId: string }) => Promise<void>;
@@ -171,7 +171,7 @@ export const postgresCandidateTaskArchive: CandidateTaskArchive = {
     });
   },
 
-  async claimNext({ leaseMs, now, workerId }) {
+  async claimNext({ leaseMs, now, preferredKind, workerId }) {
     const leaseExpiresAt = new Date(now.getTime() + leaseMs);
     const task = await withTransaction(async (client) => {
       await client.query(
@@ -187,7 +187,7 @@ export const postgresCandidateTaskArchive: CandidateTaskArchive = {
           JOIN radar_candidates candidate ON candidate.id = task.candidate_id
           WHERE task.status IN ('queued', 'retryable')
             AND candidate.last_collected_at >= $1::timestamptz - INTERVAL '7 days'
-          ORDER BY CASE task.task_kind WHEN 'enrichment' THEN 0 ELSE 1 END,
+          ORDER BY CASE WHEN $4::text IS NOT NULL AND task.task_kind = $4 THEN 0 ELSE 1 END,
             EXISTS (SELECT 1 FROM candidate_evidence_digests digest_link WHERE digest_link.candidate_id = candidate.id) DESC,
             (SELECT COUNT(*) FROM candidate_source_evidence source_link WHERE source_link.candidate_id = candidate.id) DESC,
             candidate.observation_count DESC, candidate.last_collected_at DESC, candidate.ranking_score DESC, task.created_at ASC
@@ -200,7 +200,7 @@ export const postgresCandidateTaskArchive: CandidateTaskArchive = {
         FROM next_task
         WHERE task.id = next_task.id
         RETURNING task.id, task.candidate_id, task.task_kind, task.evidence_fingerprint, task.configuration_version, task.runtime_id, task.attempt_count, task.claimed_by, task.claimed_at`,
-        [now, leaseExpiresAt, workerId],
+        [now, leaseExpiresAt, workerId, preferredKind ?? null],
       );
       const claimed = result.rows[0] ?? null;
       if (claimed) {
@@ -464,12 +464,17 @@ export function createCandidateTaskWorker(input: {
       const deadline = clock().getTime() + timeBudgetMs;
       let completed = 0;
       let runtimeUnavailable = false;
+      const claimedKinds = new Set<CandidateTaskKind>();
       while (completed < maxTasks && clock().getTime() < deadline && !runtimeUnavailable) {
         const batch: ClaimedCandidateTask[] = [];
         while (batch.length < concurrency && completed + batch.length < maxTasks && clock().getTime() < deadline) {
-          const task = await archive.claimNext({ leaseMs, now: clock(), workerId });
+          const preferredKind = claimedKinds.has("assessment")
+            ? claimedKinds.has("enrichment") ? undefined : "enrichment"
+            : claimedKinds.has("enrichment") ? "assessment" : undefined;
+          const task = await archive.claimNext({ leaseMs, now: clock(), preferredKind, workerId });
           if (!task) break;
           batch.push(task);
+          claimedKinds.add(task.kind);
         }
         if (!batch.length) break;
         await Promise.all(batch.map(async (task) => {
