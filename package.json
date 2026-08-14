@@ -5,7 +5,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev --port 3001",
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
@@ -13,7 +13,8 @@
     "test:e2e": "./scripts/test-e2e-brief-publication.sh",
     "db:migrate": "node --experimental-strip-types src/db/migrate.ts",
     "worker": "node --experimental-strip-types src/worker.ts",
-    "worker:once": "RADAR_WORKER_ONCE=true node --experimental-strip-types src/worker.ts"
+    "worker:once": "RADAR_WORKER_ONCE=true node --experimental-strip-types src/worker.ts",
+    "stack:refresh": "POSTGRES_PORT=5433 docker compose up --build -d"
   },
   "dependencies": {
     "next": "latest",
