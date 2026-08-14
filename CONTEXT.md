@@ -152,6 +152,10 @@ _Avoid_: Self-Hosted Instance, SaaS account
 The single collection configuration for a Self-Hosted Instance. It specifies enabled Source Connectors, topic inclusion and exclusion rules, Topic Tags, timing, and output language.
 _Avoid_: User account, Daily Brief
 
+**Hosted Multi-Tenant Platform**:
+A future deployment model in which separately authenticated users each own an isolated Radar Profile, collection history, credentials, and Connector Health. It is outside the current Self-Hosted Instance scope.
+_Avoid_: Self-Hosted Instance, shared profile
+
 **Model Runtime**:
 The language-model endpoint selected by a deployment to generate Grounded Assessments. A Self-Hosted Instance may use a local open model or its operator's own external API credentials.
 _Avoid_: Built-in paid service, Source Connector
@@ -175,6 +179,14 @@ _Avoid_: Ranking, generic web search
 **Connector Health**:
 The visible freshness and operating state of a Source Connector, including its most recent successful collection and any degradation or rate-limit condition.
 _Avoid_: Signal State, availability claim
+
+**Brief Coverage Summary**:
+The public, compact Connector Health disclosure captured when a Daily Brief is published. It shows aggregate coverage by default and allows the reader to reveal each source's publication-time state, without exposing operational diagnostics or later live status.
+_Avoid_: Operational Health Console, availability claim
+
+**Operational Health Console**:
+A future, operator-only view for diagnosing Connector Health through run history, failure reasons, affected output, and authorized retry actions.
+_Avoid_: Brief Coverage Summary, public status page
 
 **Connector Contract**:
 The versioned source-code interface through which a Source Connector produces normalized Source Evidence. New Connectors are added through reviewed source changes, not downloaded as runtime plugins.
