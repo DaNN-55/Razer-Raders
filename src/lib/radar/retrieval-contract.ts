@@ -22,6 +22,8 @@ export type RetrievedRadarSignal = Pick<Signal, "builderValue" | "evidence" | "h
   };
 };
 
+export type RadarSignalDetail = Omit<RetrievedRadarSignal, "signalType" | "subject">;
+
 export type RadarRetrieval = {
   availability: "empty" | "results";
   pagination: {
@@ -34,4 +36,5 @@ export type RadarRetrieval = {
 
 export type RadarRetrievalReader = {
   retrieve: (filter: RadarRetrievalFilter) => Promise<RadarRetrieval>;
+  retrieveDetail: (signalId: string) => Promise<RadarSignalDetail | null>;
 };

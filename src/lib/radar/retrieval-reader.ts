@@ -1,6 +1,6 @@
 import type { QueryResultRow } from "pg";
 import type { Evidence, Signal } from "../../components/radar-data.ts";
-import type { RadarRetrieval, RadarRetrievalFilter, RetrievedRadarSignal } from "./retrieval-contract.ts";
+import type { RadarRetrieval, RadarRetrievalFilter, RadarSignalDetail, RetrievedRadarSignal } from "./retrieval-contract.ts";
 
 type RetrievalRow = QueryResultRow & {
   builder_value: Signal["builderValue"];
@@ -28,7 +28,56 @@ type RetrievalRow = QueryResultRow & {
   why_now: string;
 };
 
+type SnapshotSignalRow = Omit<RetrievalRow, "signal_type" | "subject_canonical_identifier" | "subject_title">;
+
 export type RadarRetrievalQuery = (text: string, values?: readonly unknown[]) => Promise<{ rows: QueryResultRow[] }>;
+
+const snapshotSignalColumns = `signal.id, signal.state, signal.priority, signal.title, signal.summary, signal.topics,
+  signal.builder_value, signal.product_opportunity, signal.happened, signal.why_now, signal.why_in_brief,
+  signal.technical_basis, signal.risk, signal.evidence, signal.section_citations,
+  snapshot.published_at,
+  snapshot.configuration_version AS provenance_configuration_version,
+  snapshot.ranking_policy_version AS provenance_ranking_policy_version,
+  snapshot.model_runtime_id AS provenance_model_runtime_id,
+  snapshot.pipeline_version AS provenance_pipeline_version`;
+const retrievalColumns = `${snapshotSignalColumns}, candidate.signal_type,
+  subject.canonical_identifier AS subject_canonical_identifier,
+  subject.title AS subject_title`;
+
+function toSignalDetail(signal: SnapshotSignalRow, evidence: Evidence[]): RadarSignalDetail {
+  return {
+    builderValue: signal.builder_value,
+    evidence,
+    happened: signal.happened,
+    id: signal.id,
+    priority: signal.priority,
+    productOpportunity: signal.product_opportunity,
+    provenance: {
+      configurationVersion: signal.provenance_configuration_version,
+      modelRuntimeId: signal.provenance_model_runtime_id,
+      pipelineVersion: signal.provenance_pipeline_version,
+      rankingPolicyVersion: signal.provenance_ranking_policy_version,
+    },
+    publishedAt: signal.published_at.toISOString(),
+    risk: signal.risk,
+    sectionCitations: signal.section_citations,
+    state: signal.state,
+    summary: signal.summary,
+    technicalBasis: signal.technical_basis,
+    title: signal.title,
+    topics: signal.topics,
+    ...(signal.why_in_brief ? { whyInBrief: signal.why_in_brief } : {}),
+    whyNow: signal.why_now,
+  };
+}
+
+function toRetrievedSignal(signal: RetrievalRow, evidence: Evidence[]): RetrievedRadarSignal {
+  return {
+    ...toSignalDetail(signal, evidence),
+    signalType: signal.signal_type,
+    subject: { canonicalIdentifier: signal.subject_canonical_identifier, title: signal.subject_title },
+  };
+}
 
 export function createRadarRetrievalReader({ query }: { query: RadarRetrievalQuery }) {
   return {
@@ -53,18 +102,7 @@ export function createRadarRetrievalReader({ query }: { query: RadarRetrievalQue
       const limit = addValue(filter.limit + 1);
       const offset = addValue(filter.offset);
       const result = await query(
-        `SELECT
-          signal.id, signal.state, signal.priority, signal.title, signal.summary, signal.topics,
-          signal.builder_value, signal.product_opportunity, signal.happened, signal.why_now, signal.why_in_brief,
-          signal.technical_basis, signal.risk, signal.evidence, signal.section_citations,
-          snapshot.published_at,
-          snapshot.configuration_version AS provenance_configuration_version,
-          snapshot.ranking_policy_version AS provenance_ranking_policy_version,
-          snapshot.model_runtime_id AS provenance_model_runtime_id,
-          snapshot.pipeline_version AS provenance_pipeline_version,
-          candidate.signal_type,
-          subject.canonical_identifier AS subject_canonical_identifier,
-          subject.title AS subject_title
+        `SELECT ${retrievalColumns}
         FROM radar_signals signal
         JOIN brief_snapshots snapshot ON snapshot.id = signal.brief_id
         JOIN radar_candidates candidate ON candidate.id = signal.candidate_id
@@ -83,33 +121,21 @@ export function createRadarRetrievalReader({ query }: { query: RadarRetrievalQue
       return {
         availability: rows.length > 0 ? "results" : "empty",
         pagination: { hasMore, limit: filter.limit, offset: filter.offset },
-        results: rows.map((signal) => ({
-          builderValue: signal.builder_value,
-          evidence: verifiedEvidence(signal),
-          happened: signal.happened,
-          id: signal.id,
-          priority: signal.priority,
-          productOpportunity: signal.product_opportunity,
-          provenance: {
-            configurationVersion: signal.provenance_configuration_version,
-            modelRuntimeId: signal.provenance_model_runtime_id,
-            pipelineVersion: signal.provenance_pipeline_version,
-            rankingPolicyVersion: signal.provenance_ranking_policy_version,
-          },
-          publishedAt: signal.published_at.toISOString(),
-          risk: signal.risk,
-          sectionCitations: signal.section_citations,
-          signalType: signal.signal_type,
-          state: signal.state,
-          subject: { canonicalIdentifier: signal.subject_canonical_identifier, title: signal.subject_title },
-          summary: signal.summary,
-          technicalBasis: signal.technical_basis,
-          title: signal.title,
-          topics: signal.topics,
-          ...(signal.why_in_brief ? { whyInBrief: signal.why_in_brief } : {}),
-          whyNow: signal.why_now,
-        })),
+        results: rows.map((signal) => toRetrievedSignal(signal, verifiedEvidence(signal))),
       };
+    },
+
+    async retrieveDetail(signalId: string): Promise<RadarSignalDetail | null> {
+      const result = await query(
+        `SELECT ${snapshotSignalColumns}
+        FROM radar_signals signal
+        JOIN brief_snapshots snapshot ON snapshot.id = signal.brief_id
+        WHERE snapshot.status = 'published' AND signal.id = $1
+        LIMIT 1`,
+        [signalId],
+      ) as { rows: SnapshotSignalRow[] };
+      const signal = result.rows[0];
+      return signal ? toSignalDetail(signal, signal.evidence) : null;
     },
   };
 }

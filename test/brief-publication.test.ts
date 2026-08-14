@@ -140,6 +140,7 @@ test("固定 Runtime 通过质量门后发布含 Section Citation 与 Provenance
 
 test("日报只消费持久化完成的评估，不会再次调用模型", async () => {
   const archive = new InMemoryPublicationArchive([]);
+  const evidenceExcerpt = "Codex 是一个帮助 Builder 在本地代码任务中完成实现、验证与审查的开源工具。";
   archive.readyAssessments = [{
     assessment: {
       ...validAssessment,
@@ -147,7 +148,10 @@ test("日报只消费持久化完成的评估，不会再次调用模型", async
       citations: { ...validAssessment.citations, summary: ["https://github.com/openai/codex"] },
       whyNow: "需要在本地代码任务中减少重复操作的 Builder，可以先用它验证审批流程。",
     },
-    candidate,
+    candidate: {
+      ...candidate,
+      evidence: [{ ...candidate.evidence[0]!, excerpts: [evidenceExcerpt] }],
+    },
     configurationVersion: "profile@v1",
     runtimeId: "compatible:fixture",
   }];
@@ -163,6 +167,12 @@ test("日报只消费持久化完成的评估，不会再次调用模型", async
   assert.deepEqual(result, { briefId: "ready-brief", signalCount: 1, status: "published" });
   assert.equal(archive.requestedLimit, 1);
   assert.equal(archive.published?.provenance.modelRuntimeId, "compatible:fixture");
+  assert.deepEqual(archive.published?.signals[0]?.evidence, [{
+    excerpts: [evidenceExcerpt],
+    label: "openai/codex",
+    source: "GitHub Trending",
+    url: "https://github.com/openai/codex",
+  }]);
 });
 
 test("Evidence-first 日报冻结至多 15 条通过质量门的 Signal，不用低质量内容补齐", async () => {

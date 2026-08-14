@@ -2,12 +2,15 @@ import assert from "node:assert/strict";
 import { after, beforeEach, test } from "node:test";
 import { postgresAssessmentPipelineArchive } from "../../src/lib/radar/assessment-pipeline-archive.ts";
 import { postgresBriefPublicationArchive } from "../../src/lib/radar/brief-publication-archive.ts";
+import { createReadyBriefPublisher } from "../../src/lib/radar/brief-publication.ts";
 import { getDatabasePool } from "../../src/lib/radar/database.ts";
 import type { EvidenceDigest } from "../../src/lib/radar/evidence-enrichment.ts";
 import { postgresCandidateTaskArchive } from "../../src/lib/radar/task-queue.ts";
 import type { Candidate } from "../../src/lib/radar/connectors/types.ts";
 
 const now = new Date("2026-08-13T01:00:00.000Z");
+const baseUrl = process.env.RADAR_E2E_BASE_URL;
+if (!baseUrl) throw new Error("RADAR_E2E_BASE_URL 未配置。请通过 pnpm test:e2e 运行。");
 
 function candidate(id: string, rankingScore = 1): Candidate {
   return {
@@ -52,7 +55,7 @@ async function attachDigest(candidateId: string): Promise<EvidenceDigest> {
 }
 
 beforeEach(async () => {
-  await getDatabasePool().query("TRUNCATE TABLE candidate_tasks, candidate_evidence_digests, evidence_digests, candidate_source_evidence, source_evidence, radar_candidates, radar_subjects RESTART IDENTITY CASCADE");
+  await getDatabasePool().query("TRUNCATE TABLE radar_signals, brief_snapshots, candidate_tasks, candidate_evidence_digests, evidence_digests, candidate_source_evidence, source_evidence, radar_candidates, radar_subjects RESTART IDENTITY CASCADE");
 });
 
 after(async () => {
@@ -159,7 +162,7 @@ test("评估任务持久关联其实际使用的 Primary Evidence", { concurrenc
   assert.equal(links.rowCount, 1);
 });
 
-test("已完成的队列评估可作为日报的唯一发布输入", { concurrency: false }, async () => {
+test("已完成的队列评估发布后可从详情 API 读取冻结 Signal Card 与 Evidence", { concurrency: false }, async () => {
   const input = candidate("github:openai/ready-brief");
   await seed(input);
   const digest = await attachDigest(input.canonicalIdentifier);
@@ -190,6 +193,34 @@ test("已完成的队列评估可作为日报的唯一发布输入", { concurren
   assert.equal(ready?.[0]?.assessment.summary, "值得小范围试用。");
   assert.deepEqual(ready?.[0]?.candidate.evidence.map((evidence) => evidence.sourceUrl), [digest.sourceUrl]);
   assert.match(ready?.[0]?.candidate.selectionReason ?? "", /Builder 价值为“试用”/);
+
+  const publisher = createReadyBriefPublisher({
+    archive: postgresBriefPublicationArchive,
+    clock: () => now,
+    createBriefId: () => "brief-ready-detail",
+    isCitationAccessible: async () => true,
+    pipelineVersion: "assessment-pipeline@v1",
+  });
+  assert.deepEqual(await publisher.publishDailyBrief(), { briefId: "brief-ready-detail", signalCount: 1, status: "published" });
+
+  const response = await fetch(`${baseUrl}/api/retrieval/detail?id=brief-ready-detail%3Asignal%3A1`);
+  assert.equal(response.status, 200);
+  const detail = await response.json();
+  assert.equal(detail.id, "brief-ready-detail:signal:1");
+  assert.equal(detail.title, "github:openai/ready-brief");
+  assert.equal(detail.summary, "值得小范围试用。");
+  assert.deepEqual(detail.evidence, [{
+    excerpts: digest.excerpts,
+    label: digest.sourceTitle,
+    source: digest.sourceName,
+    url: digest.sourceUrl,
+  }]);
+  assert.deepEqual(detail.provenance, {
+    configurationVersion: "profile@v1",
+    modelRuntimeId: "ollama:qwen3",
+    pipelineVersion: "assessment-pipeline@v1",
+    rankingPolicyVersion: "evidence-first@v1",
+  });
 });
 
 test("Builder Value 的跳过仅作为排序信号，仍保留可发布 Assessment", { concurrency: false }, async () => {

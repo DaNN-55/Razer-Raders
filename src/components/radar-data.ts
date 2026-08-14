@@ -2,6 +2,7 @@ export type SignalState = "新出现" | "持续升温" | "重要更新";
 export type Priority = "高优先级" | "值得关注" | "持续观察";
 
 export type Evidence = {
+  excerpts?: readonly string[];
   label: string;
   source: string;
   url: string;

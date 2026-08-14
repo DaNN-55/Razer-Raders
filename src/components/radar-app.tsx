@@ -18,7 +18,7 @@ import { getAssessmentBanner, getBriefCoverageLabel, getBriefFormatLabel, getBri
 import { type Signal } from "@/components/radar-data";
 import { ProfileConfig } from "@/components/profile-config";
 import { type BriefCoverageConnector, type RadarBrief, type RadarConnector } from "@/lib/radar/brief";
-import type { RadarRetrieval, RetrievedRadarSignal } from "@/lib/radar/retrieval-contract";
+import type { RadarRetrieval, RadarSignalDetail } from "@/lib/radar/retrieval-contract";
 
 type View = "brief" | "archive" | "config";
 type Theme = "dark" | "light";
@@ -361,7 +361,7 @@ function SignalRow({ isSelected, onClick, signal }: { isSelected: boolean; onCli
   );
 }
 
-function SignalDetail({ isSaved, mode, onToggleSaved, provenance, signal }: { isSaved: boolean; mode: RadarBrief["mode"]; onToggleSaved: () => void; provenance?: RadarBrief["provenance"]; signal: Signal }) {
+function SignalDetail({ isSaved, mode, onToggleSaved, provenance, showEvidenceExcerpts = false, signal }: { isSaved: boolean; mode: RadarBrief["mode"]; onToggleSaved: () => void; provenance?: RadarBrief["provenance"]; showEvidenceExcerpts?: boolean; signal: Signal }) {
   return (
     <div className="detail-inner">
       <div className="detail-grid">
@@ -375,11 +375,12 @@ function SignalDetail({ isSaved, mode, onToggleSaved, provenance, signal }: { is
           </div>
           <section className="evidence-section">
             <div className="section-heading"><span>来源与证据</span><span className="evidence-actions"><small>一手资料优先</small><button aria-label={isSaved ? "取消保存" : "保存信号"} className={`detail-save ${isSaved ? "is-saved" : ""}`} onClick={onToggleSaved} type="button">{isSaved ? "已保存" : "保存"}</button></span></div>
-            {signal.evidence.map((evidence) => (
-              <a className="evidence-link" href={evidence.url} key={evidence.label} rel="noreferrer" target="_blank">
+            {signal.evidence.map((evidence) => <div className="evidence-record" key={`${evidence.url}:${evidence.label}`}>
+              <a className="evidence-link" href={evidence.url} rel="noreferrer" target="_blank">
                 <span><small>{evidence.source}</small>{evidence.label}</span><ExternalIcon size={15} />
               </a>
-            ))}
+              {showEvidenceExcerpts ? evidence.excerpts?.map((excerpt, index) => <blockquote className="evidence-excerpt" key={`${evidence.url}:${index}`}>{excerpt}</blockquote>) : null}
+            </div>)}
           </section>
           <p className="provenance">评估依据：{provenance ? `${provenance.configurationVersion} · ${provenance.rankingPolicyVersion} · ${provenance.modelRuntimeId} · ${provenance.pipelineVersion} · 已发布 Brief Snapshot` : mode === "archive" ? "等待已发布 Snapshot 的 Pipeline Provenance" : "示例数据"}</p>
         </div>
@@ -445,7 +446,18 @@ function isRadarRetrieval(value: unknown): value is RadarRetrieval {
     && typeof candidate.pagination?.offset === "number";
 }
 
-function archiveSignalToSignal(signal: RetrievedRadarSignal): Signal {
+function isRadarSignalDetail(value: unknown): value is RadarSignalDetail {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<RadarSignalDetail>;
+  return typeof candidate.id === "string"
+    && typeof candidate.title === "string"
+    && typeof candidate.publishedAt === "string"
+    && Array.isArray(candidate.evidence)
+    && !!candidate.provenance
+    && typeof candidate.provenance === "object";
+}
+
+function archiveSignalToSignal(signal: RadarSignalDetail): Signal {
   return {
     ...signal,
     index: "",
@@ -467,6 +479,10 @@ function ArchiveView({ onToggleSaved, saved }: { onToggleSaved: (id: string) => 
   const [retryNonce, setRetryNonce] = useState(0);
   const [retrieval, setRetrieval] = useState<RadarRetrieval | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [detail, setDetail] = useState<RadarSignalDetail | null>(null);
+  const [detailStatus, setDetailStatus] = useState<"error" | "idle" | "loading" | "ready">("idle");
+  const [detailError, setDetailError] = useState("");
+  const [detailRetryNonce, setDetailRetryNonce] = useState(0);
   const [status, setStatus] = useState<"error" | "initial-loading" | "loading" | "ready">("initial-loading");
   const [errorMessage, setErrorMessage] = useState("");
 
@@ -483,6 +499,8 @@ function ArchiveView({ onToggleSaved, saved }: { onToggleSaved: (id: string) => 
         if (!isRadarRetrieval(payload)) throw new Error("Archive 返回了无法识别的数据。");
         setRetrieval(payload);
         setSelectedId(null);
+        setDetail(null);
+        setDetailStatus("idle");
         setStatus("ready");
       })
       .catch((error: unknown) => {
@@ -493,6 +511,47 @@ function ArchiveView({ onToggleSaved, saved }: { onToggleSaved: (id: string) => 
 
     return () => controller.abort();
   }, [filters, offset, retryNonce]);
+
+  useEffect(() => {
+    if (!selectedId) return;
+    const controller = new AbortController();
+
+    void fetch(`/api/retrieval/detail?id=${encodeURIComponent(selectedId)}`, { signal: controller.signal })
+      .then(async (response) => {
+        const payload: unknown = await response.json().catch(() => null);
+        if (!response.ok) {
+          const message = payload && typeof payload === "object" && "error" in payload && typeof payload.error === "string" ? payload.error : "历史 Signal Card 暂时无法读取。";
+          throw new Error(message);
+        }
+        if (!isRadarSignalDetail(payload) || payload.id !== selectedId) throw new Error("历史 Signal Card 返回了无法识别的数据。");
+        setDetail(payload);
+        setDetailStatus("ready");
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) return;
+        setDetailError(error instanceof Error ? error.message : "历史 Signal Card 暂时无法读取。");
+        setDetailStatus("error");
+      });
+
+    return () => controller.abort();
+  }, [detailRetryNonce, selectedId]);
+
+  const closeDetail = () => {
+    setSelectedId(null);
+    setDetail(null);
+    setDetailError("");
+    setDetailStatus("idle");
+  };
+  const openDetail = (signalId: string) => {
+    if (selectedId === signalId) {
+      closeDetail();
+      return;
+    }
+    setSelectedId(signalId);
+    setDetail(null);
+    setDetailError("");
+    setDetailStatus("loading");
+  };
 
   const updateFilter = (name: keyof ArchiveFilters, value: string) => {
     setDraftFilters((current) => ({ ...current, [name]: value }));
@@ -505,7 +564,7 @@ function ArchiveView({ onToggleSaved, saved }: { onToggleSaved: (id: string) => 
     setFilterError("");
     setFilters({ ...draftFilters });
     setOffset(0);
-    setSelectedId(null);
+    closeDetail();
     setStatus("loading");
   };
   const resetFilters = () => {
@@ -513,7 +572,7 @@ function ArchiveView({ onToggleSaved, saved }: { onToggleSaved: (id: string) => 
     setFilters(emptyArchiveFilters);
     setFilterError("");
     setOffset(0);
-    setSelectedId(null);
+    closeDetail();
     setStatus("loading");
     setRetryNonce((value) => value + 1);
   };
@@ -548,15 +607,22 @@ function ArchiveView({ onToggleSaved, saved }: { onToggleSaved: (id: string) => 
       <div className="archive-results">{retrieval.results.map((signal) => {
         const isSelected = selectedId === signal.id;
         return <div className="archive-result" key={signal.id}>
-          <button aria-expanded={isSelected} className={`archive-row ${isSelected ? "is-selected" : ""}`} onClick={() => setSelectedId(isSelected ? null : signal.id)} type="button">
+          <button aria-expanded={isSelected} className={`archive-row ${isSelected ? "is-selected" : ""}`} onClick={() => openDetail(signal.id)} type="button">
             <span className="archive-date">{formatArchiveDate(signal.publishedAt)}</span>
             <span className="archive-copy"><strong>{signal.title}</strong><span>{signal.summary}</span><small>{signal.subject.title} · {signal.signalType} · {signal.topics.join(" · ")} · {signal.state} · {signal.evidence.length} 条证据</small></span>
             <span className="archive-right">{saved.includes(signal.id) ? "已保存" : signal.priority}<ChevronIcon size={16} /></span>
           </button>
-          {isSelected ? <div className="archive-detail"><SignalDetail isSaved={saved.includes(signal.id)} mode="archive" onToggleSaved={() => onToggleSaved(signal.id)} provenance={signal.provenance} signal={archiveSignalToSignal(signal)} /></div> : null}
+          {isSelected ? <div aria-live="polite" className="archive-detail">
+            {detailStatus === "loading" ? <div className="archive-detail-state"><RadarIcon size={22} /><h2>正在读取历史 Signal Card</h2><p>正在从已发布 Brief Snapshot 载入冻结详情…</p></div> : null}
+            {detailStatus === "error" ? <div className="archive-detail-state is-error"><RadarIcon size={22} /><h2>无法读取历史 Signal Card</h2><p>{detailError}</p><div className="archive-detail-actions"><button className="secondary-button" onClick={closeDetail} type="button">返回结果列表</button><button className="primary-button" onClick={() => { setDetailStatus("loading"); setDetailError(""); setDetailRetryNonce((value) => value + 1); }} type="button">重新读取</button></div></div> : null}
+            {detailStatus === "ready" && detail ? <>
+              <header className="archive-detail-header"><div><span>{formatArchiveDate(detail.publishedAt)} · 已发布快照</span><h2>{detail.title}</h2><p>{detail.summary}</p></div><button className="secondary-button" onClick={closeDetail} type="button"><ArrowLeftIcon size={15} />返回结果列表</button></header>
+              <SignalDetail isSaved={saved.includes(detail.id)} mode="archive" onToggleSaved={() => onToggleSaved(detail.id)} provenance={detail.provenance} showEvidenceExcerpts signal={archiveSignalToSignal(detail)} />
+            </> : null}
+          </div> : null}
         </div>;
       })}</div>
-      <nav aria-label="Radar Archive 分页" className="brief-pagination"><button disabled={offset === 0} onClick={() => { setStatus("loading"); setOffset(Math.max(0, offset - ARCHIVE_PAGE_SIZE)); }} type="button">上一页</button><span>第 {Math.floor(offset / ARCHIVE_PAGE_SIZE) + 1} 页</span><button disabled={!retrieval.pagination.hasMore} onClick={() => { setStatus("loading"); setOffset(offset + ARCHIVE_PAGE_SIZE); }} type="button">下一页</button></nav>
+      <nav aria-label="Radar Archive 分页" className="brief-pagination"><button disabled={offset === 0} onClick={() => { closeDetail(); setStatus("loading"); setOffset(Math.max(0, offset - ARCHIVE_PAGE_SIZE)); }} type="button">上一页</button><span>第 {Math.floor(offset / ARCHIVE_PAGE_SIZE) + 1} 页</span><button disabled={!retrieval.pagination.hasMore} onClick={() => { closeDetail(); setStatus("loading"); setOffset(offset + ARCHIVE_PAGE_SIZE); }} type="button">下一页</button></nav>
     </> : null}
   </section>;
 }

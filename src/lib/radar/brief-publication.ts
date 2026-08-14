@@ -17,7 +17,7 @@ export type PublicationCandidate = {
 export type PublishedSignalInput = {
   builderValue: AssessmentWithContent["builderValue"];
   candidateId: string;
-  evidence: readonly { label: string; source: string; url: string }[];
+  evidence: readonly { excerpts?: readonly string[]; label: string; source: string; url: string }[];
   happened: string;
   priority: Priority;
   productOpportunity: AssessmentWithContent["productOpportunity"];
@@ -163,7 +163,12 @@ export function toPublishedSignal(candidate: PublicationCandidate, assessment: A
   return {
     builderValue: assessment.builderValue,
     candidateId: candidate.canonicalIdentifier,
-    evidence: candidate.evidence.map((evidence) => ({ label: evidence.sourceTitle, source: evidence.sourceName, url: evidence.sourceUrl })),
+    evidence: candidate.evidence.map((evidence) => ({
+      ...(evidence.excerpts?.length ? { excerpts: evidence.excerpts } : {}),
+      label: evidence.sourceTitle,
+      source: evidence.sourceName,
+      url: evidence.sourceUrl,
+    })),
     happened: assessment.happened,
     priority: candidate.priority,
     productOpportunity: assessment.productOpportunity,
