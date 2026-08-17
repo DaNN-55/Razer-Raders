@@ -192,7 +192,7 @@ export function RadarApp({ brief }: { brief: RadarBrief }) {
         </nav>
         <div className="sidebar-footer">
           <div className="runtime-status"><span className="status-dot" /><span>系统就绪</span></div>
-          <small>Asia/Shanghai · 09:00 发布</small>
+          <small>Asia/Shanghai · 09:00 / 17:00 发布</small>
           <ThemeToggle onToggle={toggleTheme} theme={theme} />
         </div>
       </aside>

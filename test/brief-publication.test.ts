@@ -58,14 +58,15 @@ class InMemoryPublicationArchive implements PublicationArchive {
     this.delayedCandidates.push(input);
   }
 
-  async hasPublishedBrief(publicationDay: string) {
-    return this.publishedDays.includes(publicationDay);
+  async hasPublishedBrief(publicationDay: string, publicationSlot = "morning") {
+    return this.publishedDays.includes(`${publicationDay}:${publicationSlot}`);
   }
 
   async publishBrief(input: Parameters<PublicationArchive["publishBrief"]>[0]) {
-    if (this.publishedDays.includes(input.publicationDay)) return "already-published" as const;
+    const key = `${input.publicationDay}:${input.publicationSlot}`;
+    if (this.publishedDays.includes(key)) return "already-published" as const;
     this.published = input;
-    this.publishedDays.push(input.publicationDay);
+    this.publishedDays.push(key);
     return "published" as const;
   }
 
@@ -103,6 +104,7 @@ test("固定 Runtime 通过质量门后发布含 Section Citation 与 Provenance
     id: "brief-1",
     publishedAt: "2026-08-12T01:00:00.000Z",
     publicationDay: "2026-08-12",
+    publicationSlot: "morning",
     provenance: {
       configurationVersion: "profile@v1",
       modelRuntimeId: "compatible:fixture",
@@ -136,6 +138,30 @@ test("固定 Runtime 通过质量门后发布含 Section Citation 与 Provenance
     { publicationDay: "2026-08-12", stage: "publication", status: "started" },
     { publicationDay: "2026-08-12", stage: "publication", status: "succeeded" },
   ]);
+});
+
+test("同一 CST 日期可以分别发布早间和下午 Brief Snapshot", async () => {
+  const archive = new InMemoryPublicationArchive([candidate]);
+  const morning = await createFixturePublisher({
+    archive,
+    clock: () => new Date("2026-08-12T01:00:00.000Z"),
+    createBriefId: () => "brief-morning",
+    isCitationAccessible: async () => true,
+    publicationSlot: "morning",
+    runtime: runtimeFor(validAssessment),
+  }).publishDailyBrief();
+  const afternoon = await createFixturePublisher({
+    archive,
+    clock: () => new Date("2026-08-12T09:00:00.000Z"),
+    createBriefId: () => "brief-afternoon",
+    isCitationAccessible: async () => true,
+    publicationSlot: "afternoon",
+    runtime: runtimeFor(validAssessment),
+  }).publishDailyBrief();
+
+  assert.equal(morning.status, "published");
+  assert.equal(afternoon.status, "published");
+  assert.deepEqual(archive.publishedDays, ["2026-08-12:morning", "2026-08-12:afternoon"]);
 });
 
 test("日报只消费持久化完成的评估，不会再次调用模型", async () => {
@@ -266,7 +292,7 @@ test("日报发布在同一 CST 日期幂等，跨日创建新的不可变 Snaps
   assert.deepEqual(await publish("2026-08-12T01:00:00.000Z", "brief-0812"), { briefId: "brief-0812", signalCount: 1, status: "published" });
   assert.deepEqual(await publish("2026-08-12T04:00:00.000Z", "brief-0812-again"), { status: "already-published" });
   assert.deepEqual(await publish("2026-08-13T01:00:00.000Z", "brief-0813"), { briefId: "brief-0813", signalCount: 1, status: "published" });
-  assert.deepEqual(archive.publishedDays, ["2026-08-12", "2026-08-13"]);
+  assert.deepEqual(archive.publishedDays, ["2026-08-12:morning", "2026-08-13:morning"]);
 });
 
 test("校验或运行时失败会留下可诊断的阶段记录，且不发布 Snapshot", async () => {

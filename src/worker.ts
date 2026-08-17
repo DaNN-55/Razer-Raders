@@ -9,8 +9,6 @@ import { getDatabasePool } from "./lib/radar/database.ts";
 import { getRequiredRadarProfile } from "./lib/radar/profile-archive.ts";
 import { createTaskWorkerSchedule } from "./lib/radar/task-worker-schedule.ts";
 
-const defaultCollectionIntervalMs = 2 * 60 * 60 * 1000;
-
 async function collectScheduledSources() {
   const result = await collectConfiguredSources();
   if (result.status === "already-running") {
@@ -20,7 +18,7 @@ async function collectScheduledSources() {
   return result.status;
 }
 
-async function publishDailyBriefIfConfigured() {
+async function publishDailyBriefIfConfigured(publicationSlot: "morning" | "afternoon") {
   await getRequiredRadarProfile();
   const result = await createReadyBriefPublisher({
     archive: postgresBriefPublicationArchive,
@@ -28,6 +26,7 @@ async function publishDailyBriefIfConfigured() {
     createBriefId: randomUUID,
     isCitationAccessible: (url) => createCitationAccessibilityCheck([url])(url),
     maxAssessments: MAX_DAILY_BRIEF_SIGNALS,
+    publicationSlot,
     pipelineVersion: process.env.RADAR_PIPELINE_VERSION ?? "evidence-first-assessment@v1",
   }).publishDailyBrief();
   if (result.status === "published") console.log(`日报已发布：${result.signalCount} 个信号`);
@@ -37,19 +36,24 @@ async function publishDailyBriefIfConfigured() {
 }
 
 async function publishDailyBriefWhenDue() {
-  if (!createDailyPublicationSchedule(() => new Date()).getDuePublicationDay()) return;
-  await publishDailyBriefIfConfigured();
+  const due = createDailyPublicationSchedule(() => new Date()).getDuePublications();
+  for (const publication of due) {
+    try {
+      await publishDailyBriefIfConfigured(publication.slot);
+    } catch (error) {
+      console.error(`${publication.slot} 时段日报任务失败：`, error);
+    }
+  }
 }
 
 async function runWorker() {
   const schedule = createTaskWorkerSchedule({
     clock: () => new Date(),
-    collectionIntervalMs: defaultCollectionIntervalMs,
-    getCollectionIntervalMs: async () => (await getRequiredRadarProfile()).collectionIntervalMs,
     collect: collectScheduledSources,
+    getNextCycleAt: () => createDailyPublicationSchedule(() => new Date()).getNextPublicationAt(),
     onError: (error) => console.error("Task Worker 任务失败：", error),
     publish: publishDailyBriefWhenDue,
-    timers: { clearInterval, clearTimeout, setInterval, setTimeout },
+    timers: { clearTimeout, setTimeout },
   });
   if (process.env.RADAR_WORKER_ONCE === "true") {
     if (await schedule.runOnce() === "failed") process.exitCode = 1;

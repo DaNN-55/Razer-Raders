@@ -4,7 +4,6 @@ import { createProfileCandidateFilter, createProfileSourceConnectors } from "../
 import type { RadarProfile } from "../src/lib/radar/radar-profile.ts";
 
 const profile: RadarProfile = {
-  collectionIntervalMs: 7_200_000,
   enabledConnectorIds: ["github-trending", "show-hn"],
   excludeTerms: ["ignore"],
   id: "profile@v2",

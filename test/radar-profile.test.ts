@@ -3,7 +3,6 @@ import test from "node:test";
 import { createInitialRadarProfileConfig, parseRadarProfileConfig } from "../src/lib/radar/radar-profile.ts";
 
 const profile = {
-  collectionIntervalMs: 7_200_000,
   enabledConnectorIds: ["github-trending", "show-hn"],
   excludeTerms: ["irrelevant"],
   includeTerms: ["agent"],
@@ -31,7 +30,6 @@ test("Radar Profile 只接受受限的非敏感运行时配置与三个内置来
 
 test("初始 Profile 从既有部署环境迁移，凭据不会进入配置", () => {
   const initial = createInitialRadarProfileConfig({
-    RADAR_COLLECTION_INTERVAL_MS: "3600000",
     RADAR_INCLUDE_TERMS: "Agent, 推理",
     RADAR_MODEL_RUNTIME: "ollama",
     RADAR_OLLAMA_BASE_URL: "http://127.0.0.1:11434",

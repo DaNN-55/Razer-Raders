@@ -57,7 +57,7 @@ export async function getLatestPublishedBrief(): Promise<PublishedBrief | null> 
     `SELECT id, published_at, configuration_version, ranking_policy_version, model_runtime_id, pipeline_version
     FROM brief_snapshots
     WHERE status = 'published'
-    ORDER BY publication_day DESC
+    ORDER BY published_at DESC
     LIMIT 1`,
   );
   const snapshot = brief.rows[0];

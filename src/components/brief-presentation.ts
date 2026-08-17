@@ -17,6 +17,9 @@ export function getBriefHeading(input: BriefPresentationInput) {
 }
 
 export function getAssessmentBanner(input: BriefPresentationInput) {
+  if (input.assessmentDelay && input.hasPublishedSignals) {
+    return `另有 ${input.assessmentDelay.candidateCount} 个 Candidate 评估延迟，当前已发布日报正常展示。原因：${input.assessmentDelay.detail}`;
+  }
   if (input.availability === "evaluating" && input.hasPublishedSignals) {
     return `另有 ${input.pendingCandidateCount} 个新 Candidate 正在评估，不会混入当前已发布日报。`;
   }

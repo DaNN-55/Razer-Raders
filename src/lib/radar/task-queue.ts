@@ -127,13 +127,14 @@ function priorityFor(builderValue?: AssessmentWithContent["builderValue"]): Publ
 }
 
 export type CandidateTaskArchive = {
-  claimNext: (input: { leaseMs: number; now: Date; preferredKind?: CandidateTaskKind; workerId: string }) => Promise<ClaimedCandidateTask | null>;
+  claimNext: (input: { excludeTaskIds?: readonly string[]; leaseMs: number; now: Date; preferredKind?: CandidateTaskKind; workerId: string }) => Promise<ClaimedCandidateTask | null>;
   completeAssessment: (input: { assessment: GroundedAssessment; task: ClaimedCandidateTask }) => Promise<void>;
   completeEnrichment: (input: { result: EvidenceEnrichmentResult; task: ClaimedCandidateTask }) => Promise<void>;
   enqueueEnrichment: (input: { candidate: Candidate; configurationVersion: string; force?: boolean; runtimeId: string }) => Promise<void>;
   fail: (input: { errorMessage: string; task: ClaimedCandidateTask }) => Promise<"delayed" | "retryable">;
   getStatistics: (input: { cycleStartedAt: Date }) => Promise<QueueStatistics>;
   release: (input: { task: ClaimedCandidateTask }) => Promise<void>;
+  requeueDelayedAssessments?: (input: { configurationVersion: string; runtimeId: string }) => Promise<number>;
   requeueReadyAssessments: (input: { configurationVersion: string; runtimeId: string }) => Promise<number>;
 };
 
@@ -171,7 +172,7 @@ export const postgresCandidateTaskArchive: CandidateTaskArchive = {
     });
   },
 
-  async claimNext({ leaseMs, now, preferredKind, workerId }) {
+  async claimNext({ excludeTaskIds = [], leaseMs, now, preferredKind, workerId }) {
     const leaseExpiresAt = new Date(now.getTime() + leaseMs);
     const task = await withTransaction(async (client) => {
       await client.query(
@@ -187,6 +188,7 @@ export const postgresCandidateTaskArchive: CandidateTaskArchive = {
           JOIN radar_candidates candidate ON candidate.id = task.candidate_id
           WHERE task.status IN ('queued', 'retryable')
             AND candidate.last_collected_at >= $1::timestamptz - INTERVAL '7 days'
+            AND task.id <> ALL($5::text[])
           ORDER BY CASE WHEN $4::text IS NOT NULL AND task.task_kind = $4 THEN 0 ELSE 1 END,
             EXISTS (SELECT 1 FROM candidate_evidence_digests digest_link WHERE digest_link.candidate_id = candidate.id) DESC,
             (SELECT COUNT(*) FROM candidate_source_evidence source_link WHERE source_link.candidate_id = candidate.id) DESC,
@@ -200,7 +202,7 @@ export const postgresCandidateTaskArchive: CandidateTaskArchive = {
         FROM next_task
         WHERE task.id = next_task.id
         RETURNING task.id, task.candidate_id, task.task_kind, task.evidence_fingerprint, task.configuration_version, task.runtime_id, task.attempt_count, task.claimed_by, task.claimed_at`,
-        [now, leaseExpiresAt, workerId, preferredKind ?? null],
+        [now, leaseExpiresAt, workerId, preferredKind ?? null, excludeTaskIds],
       );
       const claimed = result.rows[0] ?? null;
       if (claimed) {
@@ -437,6 +439,42 @@ export const postgresCandidateTaskArchive: CandidateTaskArchive = {
       return candidates.rowCount ?? 0;
     });
   },
+
+  async requeueDelayedAssessments({ configurationVersion, runtimeId }) {
+    return withTransaction(async (client) => {
+      const candidates = await client.query<{ id: string }>(
+        `SELECT id FROM radar_candidates
+        WHERE evaluation_status = 'assessment-delayed'
+          AND last_collected_at >= NOW() - INTERVAL '7 days'
+        FOR UPDATE`,
+      );
+      for (const candidate of candidates.rows) {
+        const pendingEnrichment = await client.query(
+          `UPDATE candidate_tasks
+          SET status = 'queued', configuration_version = $2, runtime_id = $3, last_error = NULL,
+            claimed_by = NULL, claimed_at = NULL, lease_expires_at = NULL, completed_at = NULL
+          WHERE candidate_id = $1 AND task_kind = 'enrichment' AND status IN ('queued', 'retryable')
+          RETURNING id`,
+          [candidate.id, configurationVersion, runtimeId],
+        );
+        if (!pendingEnrichment.rowCount) {
+          await client.query(
+            `INSERT INTO candidate_tasks (id, candidate_id, task_kind, status, evidence_fingerprint, configuration_version, runtime_id)
+            VALUES ($1, $2, 'enrichment', 'queued', $3, $4, $5)`,
+            [randomUUID(), candidate.id, `manual-retry:${randomUUID()}`, configurationVersion, runtimeId],
+          );
+        }
+        await client.query(
+          `UPDATE radar_candidates
+          SET lifecycle_status = '待补证', evaluation_status = 'queued', assessment_delay_detail = NULL,
+            assessment_result = NULL, assessment_fingerprint = NULL, assessment_task_id = NULL, updated_at = NOW()
+          WHERE id = $1`,
+          [candidate.id],
+        );
+      }
+      return candidates.rowCount ?? 0;
+    });
+  },
 };
 
 function failureMessage(error: unknown) {
@@ -463,15 +501,15 @@ export function createCandidateTaskWorker(input: {
     async runCycle() {
       const deadline = clock().getTime() + timeBudgetMs;
       let completed = 0;
-      let runtimeUnavailable = false;
       const claimedKinds = new Set<CandidateTaskKind>();
-      while (completed < maxTasks && clock().getTime() < deadline && !runtimeUnavailable) {
+      const skippedTaskIds = new Set<string>();
+      while (completed < maxTasks && clock().getTime() < deadline) {
         const batch: ClaimedCandidateTask[] = [];
         while (batch.length < concurrency && completed + batch.length < maxTasks && clock().getTime() < deadline) {
           const preferredKind = claimedKinds.has("assessment")
             ? claimedKinds.has("enrichment") ? undefined : "enrichment"
             : claimedKinds.has("enrichment") ? "assessment" : undefined;
-          const task = await archive.claimNext({ leaseMs, now: clock(), preferredKind, workerId });
+          const task = await archive.claimNext({ excludeTaskIds: [...skippedTaskIds], leaseMs, now: clock(), preferredKind, workerId });
           if (!task) break;
           batch.push(task);
           claimedKinds.add(task.kind);
@@ -486,7 +524,7 @@ export function createCandidateTaskWorker(input: {
           } else {
             const taskRuntime = input.getRuntime ? await input.getRuntime(task.configurationVersion) : runtime ?? null;
             if (!taskRuntime || taskRuntime.id !== task.runtimeId) {
-              runtimeUnavailable = true;
+              skippedTaskIds.add(task.id);
               await archive.release({ task });
               return;
             }

@@ -1,6 +1,6 @@
 import type { AssessmentEvidence, AssessmentWithContent, EvidenceFirstAssessment, GroundedAssessment, ModelRuntime } from "./assessment-contract.ts";
 import type { Priority, SignalState } from "../../components/radar-data.ts";
-import { getCstDay } from "./daily-publication-schedule.ts";
+import { getCstDay, type PublicationSlot } from "./daily-publication-schedule.ts";
 import { MAX_DAILY_BRIEF_SIGNALS, type BriefProvenance } from "./brief-contract.ts";
 
 export type PublicationCandidate = {
@@ -40,6 +40,7 @@ type PublishBriefInput = {
   id: string;
   provenance: BriefProvenance;
   publicationDay: string;
+  publicationSlot: PublicationSlot;
   publishedAt: string;
   signals: readonly PublishedSignalInput[];
 };
@@ -47,7 +48,7 @@ type PublishBriefInput = {
 export type PublicationArchive = {
   getCandidatesForPublication: (limit?: number) => Promise<readonly PublicationCandidate[]>;
   getReadyAssessments?: (limit?: number) => Promise<readonly ReadyPublicationAssessment[]>;
-  hasPublishedBrief: (publicationDay: string) => Promise<boolean>;
+  hasPublishedBrief: (publicationDay: string, publicationSlot?: PublicationSlot) => Promise<boolean>;
   markCandidateAssessmentDelayed: (input: { candidateId: string; detail: string }) => Promise<void>;
   publishBrief: (input: PublishBriefInput) => Promise<"already-published" | "published">;
   recordPipelineStage: (input: { collectionRunId?: string; detail?: string; publicationDay: string; stage: PipelineStage; status: PipelineStageStatus }) => Promise<void>;
@@ -191,15 +192,17 @@ export function createReadyBriefPublisher(input: {
   createBriefId: () => string;
   isCitationAccessible: CitationAccessibility;
   maxAssessments?: number;
+  publicationSlot?: PublicationSlot;
   pipelineVersion: string;
 }) {
   const { archive, clock, createBriefId, isCitationAccessible, pipelineVersion } = input;
   const maxAssessments = Math.min(input.maxAssessments ?? MAX_DAILY_BRIEF_SIGNALS, MAX_DAILY_BRIEF_SIGNALS);
+  const publicationSlot = input.publicationSlot ?? "morning";
   return {
     async publishDailyBrief(): Promise<PublicationResult> {
       const publishedAt = clock();
       const publicationDay = getCstDay(publishedAt);
-      if (await archive.hasPublishedBrief(publicationDay)) return { status: "already-published" };
+      if (await archive.hasPublishedBrief(publicationDay, publicationSlot)) return { status: "already-published" };
       const ready = rankReadyAssessments(await archive.getReadyAssessments?.(maxAssessments) ?? []);
       if (!ready.length) return { reason: "Observation Window 内没有已评估待发布的 Candidate。", status: "rejected" };
       const first = ready[0]!;
@@ -222,6 +225,7 @@ export function createReadyBriefPublisher(input: {
         id,
         provenance: { configurationVersion: first.configurationVersion, modelRuntimeId: first.runtimeId, pipelineVersion, rankingPolicyVersion: first.candidate.rankingPolicyVersion },
         publicationDay,
+        publicationSlot,
         publishedAt: publishedAt.toISOString(),
         signals,
       });
@@ -239,6 +243,7 @@ export function createBriefPublisher(input: {
   createBriefId: () => string;
   isCitationAccessible: CitationAccessibility;
   maxAssessments?: number;
+  publicationSlot?: PublicationSlot;
   pipelineVersion: string;
   runtime: ModelRuntime;
 }) {
@@ -251,6 +256,7 @@ export function createBriefPublisher(input: {
     pipelineVersion,
     runtime,
   } = input;
+  const publicationSlot = input.publicationSlot ?? "morning";
   const assessmentBudgetMs = input.assessmentBudgetMs ?? 30 * 60 * 1000;
   const assessmentConcurrency = input.assessmentConcurrency ?? 1;
   const maxAssessments = input.maxAssessments ?? 10;
@@ -258,7 +264,7 @@ export function createBriefPublisher(input: {
   async function publishDailyBrief(): Promise<PublicationResult> {
     const publishedAt = clock();
     const publicationDay = getCstDay(publishedAt);
-    if (await archive.hasPublishedBrief(publicationDay)) {
+    if (await archive.hasPublishedBrief(publicationDay, publicationSlot)) {
       await archive.recordPipelineStage({ detail: "当日 Brief 已发布，跳过重复发布。", publicationDay, stage: "publication", status: "succeeded" });
       return { status: "already-published" };
     }
@@ -356,6 +362,7 @@ export function createBriefPublisher(input: {
           rankingPolicyVersion: rankingPolicyVersions[0]!,
         },
         publicationDay,
+        publicationSlot,
         publishedAt: publishedAt.toISOString(),
         signals,
       });

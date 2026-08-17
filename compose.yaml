@@ -62,7 +62,6 @@ services:
         condition: service_completed_successfully
     environment:
       DATABASE_URL: postgresql://razer_raders:${POSTGRES_PASSWORD:-local-development-only}@postgres:5432/razer_raders
-      RADAR_COLLECTION_INTERVAL_MS: 7200000
       RADAR_CONFIGURATION_VERSION: ${RADAR_CONFIGURATION_VERSION:-profile@v1}
       RADAR_MODEL_RUNTIME: ${RADAR_MODEL_RUNTIME:-compatible}
       RADAR_COMPATIBLE_RUNTIME_API_KEY: ${RADAR_COMPATIBLE_RUNTIME_API_KEY:-}
