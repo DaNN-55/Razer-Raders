@@ -223,3 +223,46 @@ test("模型报告证据不足时完成任务而不进入运行时失败重试",
   assert.deepEqual(completed, ["assessment-insufficient"]);
   assert.deepEqual(failures, []);
 });
+
+test("运行时不匹配的遗留评估任务不会阻塞同一周期的补证任务", async () => {
+  const staleAssessmentTask: ClaimedCandidateTask = {
+    ...enrichmentTask,
+    id: "stale-assessment",
+    kind: "assessment",
+    runtimeId: "legacy",
+    candidate: {
+      ...enrichmentTask.candidate,
+      primaryEvidence: [{ canonicalIdentifier: "primary:github", contentFingerprint: "a".repeat(64), excerpts: ["A local coding agent."], fetchedAt: enrichmentTask.claimedAt, sourceKind: "github-repository-description", sourceName: "GitHub", sourceTitle: "codex", sourceUrl: enrichmentTask.candidate.url }],
+    },
+  };
+  const enrichmentTaskToRun = { ...enrichmentTask, id: "enrichment-after-stale-task" };
+  const tasks = [staleAssessmentTask, enrichmentTaskToRun];
+  const released: string[] = [];
+  const completed: string[] = [];
+  const archive: CandidateTaskArchive = {
+    claimNext: async ({ excludeTaskIds }) => {
+      const index = tasks.findIndex((task) => !excludeTaskIds?.includes(task.id));
+      return index < 0 ? null : tasks[index];
+    },
+    completeAssessment: async () => undefined,
+    completeEnrichment: async ({ task }) => { completed.push(task.id); tasks.splice(tasks.findIndex((item) => item.id === task.id), 1); },
+    enqueueEnrichment: async () => undefined,
+    fail: async () => "retryable",
+    getStatistics: async () => ({ averageDurationMs: 0, completedThisCycle: 0, estimatedDrainCount: 0, estimatedDrainMs: 0, pendingByState: { "待补证": 0, "补证中": 0, "评估中": 0, "评估失败待重试": 0, "评估延迟": 0, "证据不足未入选": 0, "已评估未入选": 0, "已评估待发布": 0 }, retryCount: 0 }),
+    release: async ({ task }) => { released.push(task.id); },
+    requeueReadyAssessments: async () => 0,
+  };
+  const worker = createCandidateTaskWorker({
+    archive,
+    clock: () => new Date("2026-08-13T01:00:00.000Z"),
+    enrich: async () => ({ candidateCanonicalIdentifier: enrichmentTask.candidate.canonicalIdentifier, digests: [], status: "insufficient-evidence" as const }),
+    getRuntime: async () => ({ assess: async () => ({ assessmentOutcome: "insufficient-evidence", assessmentReason: "不应评估遗留任务。" } as never), id: "ollama:qwen3" }),
+    maxTasks: 2,
+    timeBudgetMs: 10_000,
+    workerId: "worker-1",
+  });
+
+  assert.equal(await worker.runCycle(), 2);
+  assert.deepEqual(released, ["stale-assessment"]);
+  assert.deepEqual(completed, ["enrichment-after-stale-task"]);
+});

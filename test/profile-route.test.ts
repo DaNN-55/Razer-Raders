@@ -4,7 +4,6 @@ import { createProfileCollectionHandler, createProfileGetHandler, createProfileM
 import type { RadarProfile } from "../src/lib/radar/radar-profile.ts";
 
 const profile: RadarProfile = {
-  collectionIntervalMs: 7_200_000,
   enabledConnectorIds: ["github-trending"],
   excludeTerms: [],
   id: "profile@v1",
@@ -61,11 +60,11 @@ test("首次配置时，Profile API 返回可编辑草稿而不启用未校验�
 test("Profile API 将无效的初始环境草稿转为明确错误", async () => {
   const dependency = dependencies();
   dependency.getActive = async () => null;
-  dependency.getDraft = () => { throw new Error("RADAR_COLLECTION_INTERVAL_MS 必须是有效整数。"); };
+  dependency.getDraft = () => { throw new Error("Radar Profile 配置无效。"); };
   const get = createProfileGetHandler(dependency);
   const response = await get(request("GET"));
   assert.equal(response.status, 400);
-  assert.deepEqual(await response.json(), { error: "RADAR_COLLECTION_INTERVAL_MS 必须是有效整数。" });
+  assert.deepEqual(await response.json(), { error: "Radar Profile 配置无效。" });
 });
 
 test("Profile 回滚会验证目标版本的运行时后才激活", async () => {
@@ -96,6 +95,16 @@ test("管理员可显式复评当前已评估待发布集合", async () => {
   assert.equal((await reassess(request("POST", undefined, ""))).status, 401);
   assert.deepEqual(await (await reassess(request("POST"))).json(), { requeuedCount: 3 });
   assert.equal(requeued, 1);
+});
+
+test("管理员可重新排队评估延迟 Candidate", async () => {
+  const retry = createProfileReassessHandler({
+    environment: { RADAR_ADMIN_TOKEN: "admin-token" },
+    requeue: async () => 4,
+  });
+
+  assert.equal((await retry(request("POST", undefined, ""))).status, 401);
+  assert.deepEqual(await (await retry(request("POST"))).json(), { requeuedCount: 4 });
 });
 
 test("管理员可立即采集，但不会触发 Daily Brief 发布", async () => {

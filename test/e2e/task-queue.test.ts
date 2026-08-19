@@ -144,6 +144,13 @@ test("模型任务三次失败后持久化为评估延迟，并保留错误和�
   assert.deepEqual(taskState.rows, [{ attempt_count: 3, last_error: "Ollama Runtime 请求失败：HTTP 503", status: "delayed" }]);
   assert.equal(statistics.pendingByState["评估延迟"], 1);
   assert.equal(statistics.retryCount, 1);
+
+  const requeued = await postgresCandidateTaskArchive.requeueDelayedAssessments?.({ configurationVersion: "profile@v2", runtimeId: "ollama:qwen3-local:8b" });
+  assert.equal(requeued, 1);
+  const recoveredState = await getDatabasePool().query<{ assessment_delay_detail: string | null; evaluation_status: string }>("SELECT evaluation_status, assessment_delay_detail FROM radar_candidates WHERE id = $1", [input.canonicalIdentifier]);
+  assert.deepEqual(recoveredState.rows, [{ assessment_delay_detail: null, evaluation_status: "queued" }]);
+  const retryTask = await getDatabasePool().query<{ configuration_version: string; runtime_id: string; status: string; task_kind: string }>("SELECT task_kind, status, configuration_version, runtime_id FROM candidate_tasks WHERE status = 'queued'");
+  assert.deepEqual(retryTask.rows, [{ configuration_version: "profile@v2", runtime_id: "ollama:qwen3-local:8b", status: "queued", task_kind: "enrichment" }]);
 });
 
 test("评估任务持久关联其实际使用的 Primary Evidence", { concurrency: false }, async () => {

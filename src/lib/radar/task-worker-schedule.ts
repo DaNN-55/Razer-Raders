@@ -1,24 +1,20 @@
 import { createDailyPublicationSchedule } from "./daily-publication-schedule.ts";
 
 type WorkerTimers<TimerHandle> = {
-  clearInterval: (handle: TimerHandle) => void;
   clearTimeout: (handle: TimerHandle) => void;
-  setInterval: (callback: () => void, delay: number) => TimerHandle;
   setTimeout: (callback: () => void, delay: number) => TimerHandle;
 };
 
 export function createTaskWorkerSchedule<TimerHandle>(input: {
   clock: () => Date;
-  collectionIntervalMs: number;
   collect: () => Promise<"failed" | "succeeded">;
-  getCollectionIntervalMs?: () => Promise<number>;
+  getNextCycleAt: () => Date;
   onError?: (error: unknown) => void;
   publish: () => Promise<void>;
   timers: WorkerTimers<TimerHandle>;
 }) {
-  const { clock, collectionIntervalMs, collect, getCollectionIntervalMs, onError = console.error, publish, timers } = input;
-  let collectionTimer: TimerHandle | undefined;
-  let publicationTimer: TimerHandle | undefined;
+  const { clock, collect, getNextCycleAt, onError = console.error, publish, timers } = input;
+  let cycleTimer: TimerHandle | undefined;
   let stopped = false;
 
   const collectSafely = async () => {
@@ -40,7 +36,7 @@ export function createTaskWorkerSchedule<TimerHandle>(input: {
     }
   };
 
-  const collectAtStartup = async () => {
+  const runCycle = async () => {
     const collectionStatus = await collectSafely();
     if (collectionStatus === "succeeded" && createDailyPublicationSchedule(clock).getDuePublicationDay() && !await publishSafely()) {
       return "failed" as const;
@@ -48,41 +44,26 @@ export function createTaskWorkerSchedule<TimerHandle>(input: {
     return collectionStatus;
   };
 
-  const scheduleNextPublication = () => {
+  const scheduleNextCycle = () => {
     if (stopped) return;
-    const delay = createDailyPublicationSchedule(clock).getNextPublicationAt().getTime() - clock().getTime();
-    publicationTimer = timers.setTimeout(() => {
-      void publishSafely().then(() => { if (!stopped) scheduleNextPublication(); });
-    }, delay);
-  };
-
-  const scheduleNextCollection = async () => {
-    let delay = collectionIntervalMs;
-    try {
-      if (getCollectionIntervalMs) delay = await getCollectionIntervalMs();
-    } catch (error) {
-      onError(error);
-    }
-    if (stopped) return;
-    collectionTimer = timers.setTimeout(() => {
-      void collectSafely().then(() => { void scheduleNextCollection(); });
+    const delay = Math.max(0, getNextCycleAt().getTime() - clock().getTime());
+    cycleTimer = timers.setTimeout(() => {
+      void runCycle().then(() => { if (!stopped) scheduleNextCycle(); });
     }, delay);
   };
 
   return {
-    runOnce: collectAtStartup,
+    runOnce: runCycle,
 
     async start() {
       stopped = false;
-      await collectAtStartup();
-      await scheduleNextCollection();
-      scheduleNextPublication();
+      await runCycle();
+      scheduleNextCycle();
     },
 
     stop() {
       stopped = true;
-      if (collectionTimer !== undefined) timers.clearTimeout(collectionTimer);
-      if (publicationTimer !== undefined) timers.clearTimeout(publicationTimer);
+      if (cycleTimer !== undefined) timers.clearTimeout(cycleTimer);
     },
   };
 }

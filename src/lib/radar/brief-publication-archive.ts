@@ -2,6 +2,7 @@ import type { QueryResultRow } from "pg";
 import type { PublicationArchive, PublicationCandidate, PublishedSignalInput, ReadyPublicationAssessment } from "./brief-publication.ts";
 import type { EvidenceFirstAssessment } from "./assessment-contract.ts";
 import type { BriefProvenance } from "./brief-contract.ts";
+import type { PublicationSlot } from "./daily-publication-schedule.ts";
 import { getDatabasePool, withTransaction } from "./database.ts";
 
 type CandidateRow = QueryResultRow & {
@@ -131,10 +132,10 @@ export const postgresBriefPublicationArchive: PublicationArchive = {
     } satisfies ReadyPublicationAssessment));
   },
 
-  async hasPublishedBrief(publicationDay) {
+  async hasPublishedBrief(publicationDay, publicationSlot = "morning" as PublicationSlot) {
     const result = await getDatabasePool().query(
-      "SELECT 1 FROM brief_snapshots WHERE status = 'published' AND publication_day = $1 LIMIT 1",
-      [publicationDay],
+      "SELECT 1 FROM brief_snapshots WHERE status = 'published' AND publication_day = $1 AND publication_slot = $2 LIMIT 1",
+      [publicationDay, publicationSlot],
     );
     return (result.rowCount ?? 0) > 0;
   },
@@ -148,10 +149,10 @@ export const postgresBriefPublicationArchive: PublicationArchive = {
     );
   },
 
-  async publishBrief({ id, provenance, publicationDay, publishedAt, signals }: { id: string; provenance: BriefProvenance; publicationDay: string; publishedAt: string; signals: readonly PublishedSignalInput[] }) {
+  async publishBrief({ id, provenance, publicationDay, publicationSlot, publishedAt, signals }: { id: string; provenance: BriefProvenance; publicationDay: string; publicationSlot: PublicationSlot; publishedAt: string; signals: readonly PublishedSignalInput[] }) {
     return withTransaction(async (client) => {
-      await client.query("SELECT pg_advisory_xact_lock(hashtext('razer-raders:brief:' || $1))", [publicationDay]);
-      const existing = await client.query("SELECT 1 FROM brief_snapshots WHERE status = 'published' AND publication_day = $1 LIMIT 1", [publicationDay]);
+      await client.query("SELECT pg_advisory_xact_lock(hashtext('razer-raders:brief:' || $1 || ':' || $2))", [publicationDay, publicationSlot]);
+      const existing = await client.query("SELECT 1 FROM brief_snapshots WHERE status = 'published' AND publication_day = $1 AND publication_slot = $2 LIMIT 1", [publicationDay, publicationSlot]);
       if (existing.rowCount) return "already-published" as const;
 
       const coverage = await client.query<CoverageRow>(
@@ -174,12 +175,13 @@ export const postgresBriefPublicationArchive: PublicationArchive = {
 
       await client.query(
         `INSERT INTO brief_snapshots (
-          id, published_at, publication_day, status, configuration_version, ranking_policy_version, model_runtime_id, pipeline_version
-        ) VALUES ($1, $2, $3, 'published', $4, $5, $6, $7)`,
+          id, published_at, publication_day, publication_slot, status, configuration_version, ranking_policy_version, model_runtime_id, pipeline_version
+        ) VALUES ($1, $2, $3, $4, 'published', $5, $6, $7, $8)`,
         [
           id,
           publishedAt,
           publicationDay,
+          publicationSlot,
           provenance.configurationVersion,
           provenance.rankingPolicyVersion,
           provenance.modelRuntimeId,

@@ -77,11 +77,11 @@ A thematic label used to filter and rank Radar Signals, such as Agents and Autom
 _Avoid_: Signal type, source
 
 **Collection Cycle**:
-The two-hour interval in which Source Connectors collect new Source Evidence.
+One of the two daily collection windows at 09:00 or 17:00 China Standard Time in which Source Connectors collect new Source Evidence before the corresponding Brief Snapshot.
 _Avoid_: Daily Brief, Observation Window
 
 **Publication Time**:
-The daily 09:00 China Standard Time when AI Radar automatically publishes its Daily Brief.
+The daily 09:00 and 17:00 China Standard Time windows when AI Radar automatically publishes the morning and afternoon Brief Snapshots.
 _Avoid_: Collection Cycle, user notification time
 
 **Correction**:
@@ -161,7 +161,7 @@ The publicly accessible, default-configured deployment maintained as the canonic
 _Avoid_: Self-Hosted Instance, SaaS account
 
 **Radar Profile**:
-The single collection configuration for a Self-Hosted Instance. It specifies enabled Source Connectors, topic inclusion and exclusion rules, Topic Tags, timing, and output language.
+The single collection configuration for a Self-Hosted Instance. It specifies enabled Source Connectors, topic inclusion and exclusion rules, Topic Tags, and output language; the two daily collection windows are fixed product behavior.
 _Avoid_: User account, Daily Brief
 
 **Hosted Multi-Tenant Platform**:
@@ -253,7 +253,7 @@ The person holding the deployment-supplied administrator credential that authori
 _Avoid_: Public visitor, application user
 
 **Profile Configuration**:
-The non-sensitive, persisted settings of a Radar Profile, including Connector choices, Candidate Filters, scheduling, and language. It is editable in the Profile Configuration Console and exportable or importable.
+The non-sensitive, persisted settings of a Radar Profile, including Connector choices, Candidate Filters, and language. The two daily collection and publication windows are fixed product behavior; the remaining settings are editable in the Profile Configuration Console and exportable or importable.
 _Avoid_: Source Credential, Model Runtime credential
 
 **Configuration Version**:

@@ -293,6 +293,41 @@ test("固定 Runtime 经真实 PostgreSQL 按日发布后，API 读取 Snapshot�
   assert.deepEqual(brief.signals[0]?.evidence, [{ label: "openai/codex", source: "GitHub Trending", url: "https://github.com/openai/codex" }]);
 });
 
+test("真实 PostgreSQL 允许同一 CST 日期分别发布早间和下午 Snapshot", { concurrency: false }, async () => {
+  const morning = await createBriefPublisher({
+    archive: postgresBriefPublicationArchive,
+    clock: () => new Date("2026-08-12T01:00:00.000Z"),
+    configurationVersion: "profile@v1",
+    createBriefId: () => "brief-e2e-morning",
+    isCitationAccessible: async () => true,
+    pipelineVersion: "assessment-pipeline@v1",
+    publicationSlot: "morning",
+    runtime: fixedRuntime(validAssessment),
+  }).publishDailyBrief();
+  assert.deepEqual(morning, { briefId: "brief-e2e-morning", signalCount: 1, status: "published" });
+
+  await seedSecondCandidate();
+  const afternoon = await createBriefPublisher({
+    archive: postgresBriefPublicationArchive,
+    clock: () => new Date("2026-08-12T09:00:00.000Z"),
+    configurationVersion: "profile@v1",
+    createBriefId: () => "brief-e2e-afternoon",
+    isCitationAccessible: async () => true,
+    pipelineVersion: "assessment-pipeline@v1",
+    publicationSlot: "afternoon",
+    runtime: candidateAwareRuntime("compatible:fixed-e2e-afternoon"),
+  }).publishDailyBrief();
+  assert.deepEqual(afternoon, { briefId: "brief-e2e-afternoon", signalCount: 1, status: "published" });
+
+  const snapshots = await getDatabasePool().query<{ publication_day: string; publication_slot: string }>(
+    "SELECT publication_day::text AS publication_day, publication_slot FROM brief_snapshots ORDER BY published_at",
+  );
+  assert.deepEqual(snapshots.rows, [
+    { publication_day: "2026-08-12", publication_slot: "morning" },
+    { publication_day: "2026-08-12", publication_slot: "afternoon" },
+  ]);
+});
+
 test("Daily Brief 冻结发布时的来源覆盖度，不读取后续实时 Connector Health", { concurrency: false }, async () => {
   const database = getDatabasePool();
   await database.query(

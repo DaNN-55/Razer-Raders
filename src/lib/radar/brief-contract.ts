@@ -79,8 +79,16 @@ export function createArchiveRadarBrief(input: {
     ? { candidateCount: assessment.candidateCount, detail: assessment.detail }
     : undefined;
 
+  const availability = assessment.status === "assessment-delayed" && !brief
+    ? "assessment-delayed"
+    : assessment.status === "evaluating"
+      ? "evaluating"
+      : brief
+        ? "published"
+        : "unpublished";
+
   return {
-    availability: assessment.status === "assessment-delayed" ? "assessment-delayed" : assessment.status === "evaluating" ? "evaluating" : brief ? "published" : "unpublished",
+    availability,
     ...(assessmentDelay ? { assessmentDelay } : {}),
     connectors,
     ...(brief?.coverage ? { coverage: brief.coverage } : {}),

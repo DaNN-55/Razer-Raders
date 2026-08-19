@@ -105,9 +105,11 @@ test("Brief API 将 Assessment Delay 与已有已发布日报同时透明呈现"
       candidateCount: 2,
       detail: "Compatible Runtime 请求失败：HTTP 503（已重试 3 次）",
     },
-    availability: "assessment-delayed",
+    availability: "published",
     signals: [publishedSignal],
   });
+
+  assert.equal(getAssessmentBanner({ ...payload, hasPublishedSignals: true, visibleSignalCount: 1 }), "另有 2 个 Candidate 评估延迟，当前已发布日报正常展示。原因：Compatible Runtime 请求失败：HTTP 503（已重试 3 次）");
 });
 
 test("未配置数据库时，公开 Brief 不再回退到 Fixture", async () => {

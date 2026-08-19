@@ -212,7 +212,8 @@ test("Instance Administrator 可在紧凑屏幕加载并编辑 Profile，未授�
   await page.getByRole("button", { name: "加载配置" }).click();
   await expect(page.getByText("来源连接器")).toBeVisible();
 
-  await page.getByRole("spinbutton", { name: "采集间隔（分钟）" }).fill("120");
+  await expect(page.getByRole("textbox", { name: "自动采集时间" })).toHaveValue("每天 09:00、17:00（中国标准时间）");
+  await page.getByRole("spinbutton", { name: "每轮评估上限" }).fill("6");
   await page.getByRole("button", { name: "校验并保存新版本" }).click();
   await expect(page.getByText("Compatible API 凭据未由部署环境配置。")).toBeVisible();
 });

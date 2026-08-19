@@ -12,7 +12,6 @@ export type RadarRuntimeConfig = {
 };
 
 export type RadarProfileConfig = {
-  collectionIntervalMs: number;
   enabledConnectorIds: readonly ConnectorId[];
   excludeTerms: readonly string[];
   includeTerms: readonly string[];
@@ -25,7 +24,6 @@ export type RadarProfile = RadarProfileConfig & {
 };
 
 export type RadarProfileEnvironment = {
-  RADAR_COLLECTION_INTERVAL_MS?: string;
   RADAR_COMPATIBLE_RUNTIME_BASE_URL?: string;
   RADAR_COMPATIBLE_RUNTIME_MODEL?: string;
   RADAR_EXCLUDE_TERMS?: string;
@@ -98,7 +96,6 @@ export function parseRadarProfileConfig(value: unknown): RadarProfileConfig {
     throw new Error("至少需要启用一个 Connector。");
   }
   return {
-    collectionIntervalMs: parseInteger(profile.collectionIntervalMs, "collectionIntervalMs", 60_000, 86_400_000),
     enabledConnectorIds,
     excludeTerms: parseStringList(profile.excludeTerms, "excludeTerms"),
     includeTerms: parseStringList(profile.includeTerms, "includeTerms"),
@@ -118,7 +115,6 @@ export function createInitialRadarProfileConfig(environment: RadarProfileEnviron
       model: environment.RADAR_COMPATIBLE_RUNTIME_MODEL ?? "not-configured",
     };
   return parseRadarProfileConfig({
-    collectionIntervalMs: Number(environment.RADAR_COLLECTION_INTERVAL_MS ?? 7_200_000),
     enabledConnectorIds: ["github-trending", "hugging-face-trending", "show-hn"],
     excludeTerms: readEnvironmentTerms(environment.RADAR_EXCLUDE_TERMS),
     includeTerms: readEnvironmentTerms(environment.RADAR_INCLUDE_TERMS),
